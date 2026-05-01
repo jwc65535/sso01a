@@ -1,0 +1,28 @@
+# Secrets — never commit
+.env
+secrets/
+pki/certs/*.pem
+pki/certs/*.key
+pki/certs/*.crt
+pki/certs/*.p12
+postgres/ssl/*.pem
+postgres/ssl/*.crt
+postgres/ssl/*.key
+
+# Go
+app/vendor/
+app/*.test
+*.out
+*.prof
+
+# Docker
+.docker/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

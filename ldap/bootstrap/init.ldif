@@ -1,0 +1,19 @@
+# ldap/bootstrap/init.ldif
+# Loaded by bitnami/openldap on first start via /docker-entrypoint-initdb.d/.
+# Creates the base OU structure. User entries are added at enrolment time.
+
+dn: ou=users,dc=sso,dc=local
+objectClass: organizationalUnit
+ou: users
+description: SSO user accounts (public certs only, no passwords)
+
+dn: ou=groups,dc=sso,dc=local
+objectClass: organizationalUnit
+ou: groups
+description: SSO group memberships
+
+dn: cn=sso-users,ou=groups,dc=sso,dc=local
+objectClass: groupOfNames
+cn: sso-users
+description: All authenticated SSO users
+member: cn=admin,dc=sso,dc=local

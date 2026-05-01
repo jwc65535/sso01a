@@ -1,0 +1,50 @@
+# =============================================================================
+# ldap/bootstrap/00-dit-base.ldif
+#
+# Creates the base Directory Information Tree (DIT) for dc=sso,dc=local.
+# Loaded by bitnami's setup.sh via ldapadd as cn=admin,dc=sso,dc=local.
+#
+# Replaces: ldap/bootstrap/init.ldif (Prompt 2)
+#
+# DIT STRUCTURE
+# ─────────────
+#   dc=sso,dc=local                (root, created by bitnami)
+#   ├── ou=users                   (user accounts — inetOrgPerson + ssoUser)
+#   ├── ou=groups                  (group memberships — groupOfNames)
+#   └── ou=service-accounts        (machine identities — cert-writer)
+#
+# PRIVATE KEY POLICY
+# ──────────────────
+# No entry in this DIT stores any private key, passphrase, TOTP seed, or
+# any secret material. The userCertificate attribute stores ONLY the
+# DER-encoded PUBLIC certificate. The ACL in acl/00-global-acl.ldif
+# enforces this at the directory server level.
+# =============================================================================
+
+# ── Organizational units ──────────────────────────────────────────────────────
+dn: ou=users,dc=sso,dc=local
+objectClass: organizationalUnit
+objectClass: top
+ou: users
+description: SSO user accounts — public x509 certificates only, no secrets
+
+dn: ou=groups,dc=sso,dc=local
+objectClass: organizationalUnit
+objectClass: top
+ou: groups
+description: SSO application groups
+
+dn: ou=service-accounts,dc=sso,dc=local
+objectClass: organizationalUnit
+objectClass: top
+ou: service-accounts
+description: Machine identities for automated operations (cert-writer, etc.)
+
+# ── Default groups ────────────────────────────────────────────────────────────
+dn: cn=sso-users,ou=groups,dc=sso,dc=local
+objectClass: groupOfNames
+objectClass: top
+cn: sso-users
+description: All users with enrolled x509 certificates
+# member attribute is required for groupOfNames; admin is the bootstrap member
+member: cn=admin,dc=sso,dc=local

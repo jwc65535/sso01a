@@ -1,0 +1,154 @@
+#!/bin/bash
+# =============================================================================
+# ldap-cert-push.sh.tmpl
+# Rendered by consul-template; executed on every Vault PKI change and on the
+# 30-minute SIGHUP from entrypoint.sh.
+#
+# WHAT THIS SCRIPT DOES
+# ─────────────────────
+# For each non-revoked, non-CA certificate in pki_int/certs/:
+#   1. Write the PEM cert to a temp file (avoids shell-quoting issues with
+#      multi-line PEM strings embedded by consul-template).
+#   2. Parse CN via openssl; skip if the LDAP entry doesn't exist yet
+#      (enrolment must happen first via the Golang app).
+#   3. Compute the DER cert and its SHA-256 thumbprint (base64url, RFC 7517).
+#   4. Compare thumbprint against ssoCertThumbprint in LDAP.  Skip if unchanged
+#      (idempotent — safe to run every 30 minutes without spam).
+#   5. Push userCertificate;binary + ssoCertThumbprint + ssoEnrolledAt via
+#      ldapmodify authenticated as cert-writer (ACL rule 1 — not admin).
+#
+# EXIT CODES (subshell convention)
+# ─────────────────────────────────
+#   0  — cert pushed successfully
+#   2  — intentional skip (no entry yet, or thumbprint unchanged)
+#   1  — LDAP error (logged; outer script exits 1 after processing all certs)
+#
+# SECURITY INVARIANT
+# ──────────────────
+# cert-writer can only replace cert attributes — it cannot add/delete entries,
+# modify userPassword, or escalate its own permissions (ACL rule 1 in
+# ldap/acl/00-global-acl.ldif).  A leaked cert-writer credential yields a
+# cert-attribute DoS, NOT an authentication bypass — the private key is still
+# required and is never stored server-side.
+# =============================================================================
+set -euo pipefail
+
+# ── Runtime config (set by docker-compose environment) ───────────────────────
+LDAP_H="ldap://${LDAP_HOST:-ldap}:${LDAP_PORT:-1389}"
+BIND_DN="${LDAP_BIND_DN:-cn=cert-writer,ou=service-accounts,dc=sso,dc=local}"
+BASE_DN="${LDAP_BASE_DN:-dc=sso,dc=local}"
+
+# Password from Docker secret — never in env vars.
+BIND_PW="$(cat /run/secrets/ldap_cert_writer_password 2>/dev/null || true)"
+if [ -z "${BIND_PW}" ]; then
+    echo "[ldap-push] FATAL: /run/secrets/ldap_cert_writer_password is missing." >&2
+    exit 1
+fi
+
+# ── Temp directory: guaranteed cleanup on any exit ────────────────────────────
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "${SCRATCH}"' EXIT
+
+PUSHED=0
+SKIPPED=0
+FAILED=0
+
+# Helper: update counters from subshell exit code.
+_tally() {
+    local rc=$1
+    case ${rc} in
+        0) PUSHED=$((PUSHED+1))   ;;
+        2) SKIPPED=$((SKIPPED+1)) ;;
+        *) FAILED=$((FAILED+1))   ;;
+    esac
+}
+
+# =============================================================================
+# consul-template expands one code block per active, non-CA certificate.
+# Each block is a self-contained subshell so failures are isolated.
+# =============================================================================
+
+{{ range secrets "pki_int/certs/" -}}
+{{- $serial := . -}}
+{{- with secret (printf "pki_int/cert/%s" $serial) -}}
+{{- if and (not .Data.revocation_time) (not .Data.is_ca) -}}
+{{- $parsed := .Data.certificate | pemCertificates -}}
+{{- if $parsed -}}
+{{- $cn := (index $parsed 0).Subject.CommonName -}}
+{{- if $cn }}
+
+# ── {{ $serial }} / CN={{ $cn }} ──────────────────────────────────────────────
+_rc=0
+(
+    SERIAL="{{ $serial }}"
+    CN="{{ $cn }}"
+    USER_DN="uid=${CN},ou=users,${BASE_DN}"
+
+    # Write PEM to a temp file — consul-template embeds literal newlines which
+    # are safe inside a heredoc but not in a variable assignment used by openssl.
+    PEM_FILE="${SCRATCH}/${SERIAL}.pem"
+    cat > "${PEM_FILE}" <<'HEREDOC_END'
+{{ .Data.certificate }}
+HEREDOC_END
+
+    # Verify the LDAP entry exists.  cert-writer cannot add entries (ACL rule 2
+    # restricts ou=service-accounts; rule 3 requires admin to create ou=users
+    # entries).  Enrolment is the Golang app's responsibility.
+    if ! ldapsearch -x -H "${LDAP_H}" \
+            -D "${BIND_DN}" -w "${BIND_PW}" \
+            -b "${USER_DN}" -s base "(objectClass=*)" dn 2>/dev/null \
+            | grep -q "^dn:"; then
+        echo "[ldap-push] SKIP: no LDAP entry for CN=${CN} (enrolment pending)."
+        exit 2
+    fi
+
+    # PEM → DER (binary) → base64, for the LDAP userCertificate;binary attribute.
+    DER_FILE="${SCRATCH}/${SERIAL}.der"
+    openssl x509 -in "${PEM_FILE}" -outform DER -out "${DER_FILE}" 2>/dev/null
+    CERT_B64="$(base64 -w0 < "${DER_FILE}")"
+
+    # base64url(SHA-256(DER)) — the cnf.x5t#S256 RFC 7800 proof-of-possession value.
+    THUMBPRINT="$(openssl dgst -sha256 -binary "${DER_FILE}" \
+        | openssl enc -base64 -A \
+        | tr '+/' '-_' \
+        | tr -d '=')"
+
+    # Read the currently stored thumbprint; skip if unchanged (idempotent).
+    CURRENT_THUMB="$(ldapsearch -x -H "${LDAP_H}" \
+        -D "${BIND_DN}" -w "${BIND_PW}" \
+        -b "${USER_DN}" -s base "(objectClass=*)" ssoCertThumbprint 2>/dev/null \
+        | sed -n 's/^ssoCertThumbprint: //p' \
+        | tr -d ' \r\n')"
+
+    if [ "${CURRENT_THUMB}" = "${THUMBPRINT}" ]; then
+        echo "[ldap-push] SKIP: CN=${CN} cert is current (thumbprint matches)."
+        exit 2
+    fi
+
+    echo "[ldap-push] PUSH: CN=${CN} serial=${SERIAL} new-thumb=${THUMBPRINT}."
+
+    # generalizedTime format (YYYYMMDDHHmmssZ) for ssoEnrolledAt.
+    # consul-template's timestamp() formats the current time at render time —
+    # close enough to push time for audit purposes.
+    ENROLLED_AT="{{ timestamp "20060102150405Z" }}"
+
+    # Write LDIF to a file — avoids inline heredoc quoting with long base64 strings.
+    LDIF_FILE="${SCRATCH}/${SERIAL}.ldif"
+    printf 'dn: %s\nchangetype: modify\nreplace: userCertificate;binary\nuserCertificate;binary:: %s\n-\nreplace: ssoCertThumbprint\nssoCertThumbprint: %s\n-\nreplace: ssoEnrolledAt\nssoEnrolledAt: %s\n' \
+        "${USER_DN}" "${CERT_B64}" "${THUMBPRINT}" "${ENROLLED_AT}" > "${LDIF_FILE}"
+
+    ldapmodify -x -H "${LDAP_H}" -D "${BIND_DN}" -w "${BIND_PW}" \
+        -f "${LDIF_FILE}" 2>&1
+    echo "[ldap-push] OK: CN=${CN} pushed (thumbprint=${THUMBPRINT})."
+) || _rc=$?
+_tally ${_rc}
+
+{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+echo "[ldap-push] Complete — pushed=${PUSHED} skipped=${SKIPPED} failed=${FAILED}"
+[ "${FAILED}" -eq 0 ] || exit 1

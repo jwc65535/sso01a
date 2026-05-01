@@ -1,0 +1,51 @@
+<Attributes xmlns="urn:mace:shibboleth:2.0:attribute-map"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+    <!--
+        attribute-map.xml — maps SAML assertion attribute OIDs to SP-side IDs.
+        The IDs here become:
+          • Apache environment variables (SHIB_<ID>) passed to CGI/FastCGI
+          • HTTP request headers (<id>: <value>) when ShibUseHeaders On is set
+        The Golang app reads these headers.
+
+        OID assignments mirror saml20-idp-hosted.php authproc step 30.
+        Custom OIDs use private arc 1.3.6.1.4.1.99999 (replace in production).
+    -->
+
+    <!-- ── Standard eduPerson ──────────────────────────────────────────────── -->
+    <Attribute name="urn:oid:1.3.6.1.4.1.5923.1.1.1.7" id="entitlement"/>
+    <Attribute name="urn:oid:1.3.6.1.4.1.5923.1.1.1.9" id="scopedAffiliation"/>
+    <Attribute name="urn:oid:1.3.6.1.4.1.5923.1.1.1.6" id="eppn"
+               nameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri"/>
+
+    <!-- ── Core LDAP attributes ───────────────────────────────────────────── -->
+    <Attribute name="urn:oid:0.9.2342.19200300.100.1.1" id="uid"/>
+    <Attribute name="urn:oid:0.9.2342.19200300.100.1.3" id="mail"/>
+    <Attribute name="urn:oid:2.5.4.3"                   id="cn"/>
+    <Attribute name="urn:oid:2.5.4.4"                   id="sn"/>
+    <Attribute name="urn:oid:2.5.4.42"                  id="givenName"/>
+
+    <!-- ── Custom sso01a attributes (private OID arc) ─────────────────────── -->
+    <!-- x5t#S256 base64url thumbprint of the user's Vault-issued x509 cert.
+         Backend uses this for JWT cnf (RFC 7800 proof-of-possession) binding. -->
+    <Attribute name="urn:oid:1.3.6.1.4.1.99999.1.1" id="ssoCertThumbprint"/>
+
+    <!-- FingerprintJS visitor ID bound at enrolment; backend validates on each request. -->
+    <Attribute name="urn:oid:1.3.6.1.4.1.99999.1.2" id="ssoDeviceFingerprint"/>
+
+    <!-- Unix epoch of certificate enrolment; backend enforces enrolment recency. -->
+    <Attribute name="urn:oid:1.3.6.1.4.1.99999.1.3" id="ssoEnrolledAt"/>
+
+    <!-- ── NameID decoders ────────────────────────────────────────────────── -->
+    <Attribute name="urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+               id="persistent-id">
+        <AttributeDecoder xsi:type="NameIDAttributeDecoder"
+                          formatter="$NameQualifier!$SPNameQualifier!$Name"/>
+    </Attribute>
+
+    <Attribute name="urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
+               id="transient-id">
+        <AttributeDecoder xsi:type="NameIDAttributeDecoder"
+                          formatter="$NameQualifier!$SPNameQualifier!$Name"/>
+    </Attribute>
+</Attributes>

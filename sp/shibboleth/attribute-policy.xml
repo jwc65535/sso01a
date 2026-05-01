@@ -1,0 +1,30 @@
+<afp:AttributeFilterPolicyGroup
+        xmlns:afp="urn:mace:shibboleth:2.0:afp"
+        xmlns:basic="urn:mace:shibboleth:2.0:afp:mf:basic"
+        xmlns:saml="urn:mace:shibboleth:2.0:afp:mf:saml"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+    <!--
+        attribute-policy.xml — whitelist exactly the attributes the Golang app needs.
+        The IdP's AttributeLimit authproc step already restricts what is released;
+        this is a second filter at the SP so no unexpected attributes reach the backend.
+    -->
+    <afp:AttributeFilterPolicy id="sso01a-default">
+        <afp:PolicyRequirementRule xsi:type="basic:ANY"/>
+
+        <!-- Core identity -->
+        <afp:AttributeRule attributeID="uid"                  permitAny="true"/>
+        <afp:AttributeRule attributeID="mail"                 permitAny="true"/>
+        <afp:AttributeRule attributeID="cn"                   permitAny="true"/>
+        <afp:AttributeRule attributeID="sn"                   permitAny="true"/>
+        <afp:AttributeRule attributeID="givenName"            permitAny="true"/>
+
+        <!-- Zero-trust binding attributes -->
+        <afp:AttributeRule attributeID="ssoCertThumbprint"    permitAny="true"/>
+        <afp:AttributeRule attributeID="ssoDeviceFingerprint" permitAny="true"/>
+        <afp:AttributeRule attributeID="ssoEnrolledAt"        permitAny="true"/>
+
+        <!-- NameID -->
+        <afp:AttributeRule attributeID="persistent-id"        permitAny="true"/>
+    </afp:AttributeFilterPolicy>
+</afp:AttributeFilterPolicyGroup>

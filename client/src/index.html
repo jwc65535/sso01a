@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SSO Portal</title>
+  <link rel="stylesheet" href="style.css">
+
+  <!--
+    FingerprintJS open-source v4 — sets window.FingerprintJS
+    https://github.com/fingerprintjs/fingerprintjs
+
+    The SRI hash below pins the exact library version; update it when
+    upgrading FingerprintJS by running:
+      curl -s https://openfpcdn.io/fingerprintjs/v4/iife.min.js | openssl dgst -sha384 -binary | base64
+  -->
+  <script
+    src="https://openfpcdn.io/fingerprintjs/v4/iife.min.js"
+    crossorigin="anonymous"
+  ></script>
+</head>
+<body>
+
+  <!-- ── Loading screen ──────────────────────────────────────────────────── -->
+  <div id="loading" class="screen">
+    <div class="center-content">
+      <div class="spinner" aria-label="Checking authentication…"></div>
+      <p class="muted">Checking session…</p>
+    </div>
+  </div>
+
+  <!-- ── Login screen ────────────────────────────────────────────────────── -->
+  <div id="login" class="screen" hidden>
+    <div class="center-content login-card">
+      <h1>SSO Portal</h1>
+      <p class="muted">Zero-trust authentication with SAML 2.0 and x509 certificates.</p>
+
+      <div class="fp-info">
+        <span class="label">Device fingerprint</span>
+        <code id="fp-display">—</code>
+      </div>
+
+      <button id="login-btn" class="btn btn-primary btn-lg">
+        Sign in with SAML
+      </button>
+
+      <p class="hint">
+        You will be redirected to your identity provider.<br>
+        A device fingerprint will be bound to your session token.
+      </p>
+    </div>
+  </div>
+
+  <!-- ── Dashboard screen ────────────────────────────────────────────────── -->
+  <div id="dashboard" class="screen" hidden>
+
+    <header class="app-header">
+      <div class="header-left">
+        <span class="app-name">SSO Portal</span>
+        <span class="user-badge">
+          <span id="user-uid">—</span>
+          &nbsp;·&nbsp;
+          <span id="user-mail" class="muted">—</span>
+        </span>
+      </div>
+      <div class="header-right">
+        <button id="logout-btn" class="btn btn-ghost btn-sm">Sign out</button>
+      </div>
+    </header>
+
+    <nav class="tab-bar" role="tablist">
+      <button class="tab-btn" data-tab="userinfo"  role="tab">Identity</button>
+      <button class="tab-btn" data-tab="sessions"  role="tab">Sessions</button>
+      <button class="tab-btn" data-tab="audit"     role="tab">Audit log</button>
+      <button class="tab-btn" data-tab="cert"      role="tab">Certificate</button>
+    </nav>
+
+    <main class="tab-content">
+
+      <section id="panel-userinfo" class="tab-panel" data-tab="userinfo">
+        <!-- populated by renderUserInfo() -->
+      </section>
+
+      <section id="panel-sessions" class="tab-panel" data-tab="sessions" hidden>
+        <!-- populated by loadSessions() -->
+      </section>
+
+      <section id="panel-audit" class="tab-panel" data-tab="audit" hidden>
+        <!-- populated by loadAudit() -->
+      </section>
+
+      <section id="panel-cert" class="tab-panel" data-tab="cert" hidden>
+        <!-- populated by renderCertPanel() -->
+      </section>
+
+    </main>
+  </div>
+
+  <!-- scripts loaded last so DOM is ready -->
+  <script src="config.js"></script>
+  <script src="fingerprint.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

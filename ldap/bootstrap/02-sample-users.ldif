@@ -1,0 +1,56 @@
+# =============================================================================
+# ldap/bootstrap/02-sample-users.ldif
+#
+# Development sample users. Each entry uses:
+#   inetOrgPerson     — standard identity attributes (RFC 2798)
+#   ssoUser           — auxiliary class adding our custom cert attributes
+#
+# The userCertificate attribute is intentionally ABSENT here.
+# gen-sample-certs.sh populates it during first-run initialization with
+# a self-signed EC P-256 development certificate.
+#
+# In production:
+#   • Users are created at SAML-driven enrolment time by the Golang app
+#   • userCertificate is pushed by consul-template after Vault signs a CSR
+#   • This LDIF file is NOT loaded in production
+#
+# ATTRIBUTE POLICY (enforced by ACL + design):
+#   ✓ Stored:  uid, cn, sn, givenName, mail, objectClass
+#   ✓ Stored:  userCertificate (DER-encoded PUBLIC cert — set by gen-sample-certs.sh)
+#   ✓ Stored:  ssoCertThumbprint, ssoDeviceFingerprint, ssoEnrolledAt
+#   ✗ Never stored: userPassword, private key, passphrase, TOTP seed
+# =============================================================================
+
+# ── Alice ──────────────────────────────────────────────────────────────────────
+dn: uid=alice,ou=users,dc=sso,dc=local
+objectClass: inetOrgPerson
+objectClass: ssoUser
+objectClass: top
+uid: alice
+cn: Alice Smith
+sn: Smith
+givenName: Alice
+mail: alice@sso.local
+# PostgreSQL role: the Golang app calls provision_user_role('alice') at enrolment.
+# The CN on the x509 cert must equal the PostgreSQL role name (enforced by pg_ident).
+# userCertificate: populated by gen-sample-certs.sh at first-run init
+# ssoCertThumbprint: populated by gen-sample-certs.sh
+# ssoDeviceFingerprint: populated at browser enrolment via the Golang app
+
+# ── Bob ────────────────────────────────────────────────────────────────────────
+dn: uid=bob,ou=users,dc=sso,dc=local
+objectClass: inetOrgPerson
+objectClass: ssoUser
+objectClass: top
+uid: bob
+cn: Bob Jones
+sn: Jones
+givenName: Bob
+mail: bob@sso.local
+
+# ── Add users to the sso-users group ──────────────────────────────────────────
+dn: cn=sso-users,ou=groups,dc=sso,dc=local
+changetype: modify
+add: member
+member: uid=alice,ou=users,dc=sso,dc=local
+member: uid=bob,ou=users,dc=sso,dc=local

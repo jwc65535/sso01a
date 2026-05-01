@@ -1,0 +1,221 @@
+/* style.css — SSO Portal minimal UI */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0f1117;
+  --surface:   #1a1d27;
+  --border:    #2d3148;
+  --primary:   #5b6af0;
+  --primary-h: #4a57e0;
+  --danger:    #e05555;
+  --danger-h:  #c84444;
+  --text:      #e2e4f0;
+  --muted:     #7a7f9a;
+  --code-bg:   #12141e;
+  --success:   #3ab87a;
+  --radius:    6px;
+  font-size: 15px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ── Screens ────────────────────────────────────────────────────────────── */
+
+.screen { min-height: 100vh; }
+
+/* ── Center content (loading + login screens) ───────────────────────────── */
+
+.center-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  gap: 1.25rem;
+  padding: 2rem;
+}
+
+/* ── Login card ─────────────────────────────────────────────────────────── */
+
+.login-card {
+  max-width: 400px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.login-card h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.fp-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 100%;
+  text-align: left;
+}
+
+.fp-info .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.fp-info code   { font-size: 0.8rem; color: var(--primary); word-break: break-all; }
+
+.hint { font-size: 0.8rem; color: var(--muted); }
+
+/* ── Spinner ────────────────────────────────────────────────────────────── */
+
+.spinner {
+  width: 36px; height: 36px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.5rem;
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 10;
+}
+
+.app-name   { font-weight: 700; font-size: 1rem; margin-right: 1rem; }
+.user-badge { font-size: 0.85rem; }
+
+/* ── Tabs ───────────────────────────────────────────────────────────────── */
+
+.tab-bar {
+  display: flex;
+  gap: 0;
+  padding: 0 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: 0.75rem 1.125rem;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.tab-btn:hover  { color: var(--text); }
+.tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+/* ── Tab content ────────────────────────────────────────────────────────── */
+
+.tab-content { padding: 1.5rem; max-width: 900px; }
+.tab-panel   { animation: fadeIn 0.15s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } }
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--radius);
+  cursor: pointer; font-size: 0.875rem; font-weight: 500;
+  padding: 0.5rem 1rem; transition: background 0.15s, opacity 0.15s;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--primary-h); }
+
+.btn-danger  { background: var(--danger); color: #fff; }
+.btn-danger:hover:not(:disabled)  { background: var(--danger-h); }
+
+.btn-ghost   { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+.btn-ghost:hover { color: var(--text); background: var(--border); }
+
+.btn-lg  { font-size: 1rem; padding: 0.75rem 2rem; width: 100%; }
+.btn-sm  { font-size: 0.75rem; padding: 0.25rem 0.625rem; }
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+
+.info-table, .data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.info-table th {
+  width: 160px; text-align: left;
+  color: var(--muted); padding: 0.5rem 1rem 0.5rem 0; font-weight: 400;
+  vertical-align: top;
+}
+.info-table td { padding: 0.5rem 0; }
+
+.data-table thead th {
+  text-align: left; padding: 0.5rem 0.75rem;
+  color: var(--muted); font-weight: 500; font-size: 0.75rem;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+.data-table tbody tr:hover { background: var(--surface); }
+.data-table td { padding: 0.625rem 0.75rem; border-bottom: 1px solid var(--border); }
+
+/* ── Certificate panel ──────────────────────────────────────────────────── */
+
+.cert-output {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.cert-output.success { border-color: var(--success); background: #0d2a1a; }
+.cert-output.error   { border-color: var(--danger);  background: #2a0d0d; }
+
+.cert-output pre {
+  margin-top: 0.5rem;
+  background: var(--code-bg);
+  padding: 0.75rem;
+  border-radius: var(--radius);
+  font-size: 0.7rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+details summary { cursor: pointer; margin-top: 0.5rem; color: var(--primary); }
+
+/* ── Utilities ──────────────────────────────────────────────────────────── */
+
+.hidden { display: none; }
+.muted  { color: var(--muted); }
+.error  { color: var(--danger); }
+.mono   { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 0.8rem; }
+
+code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+
+p + p { margin-top: 0.5rem; }

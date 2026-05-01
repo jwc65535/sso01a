@@ -1,0 +1,90 @@
+# =============================================================================
+# ldap/acl/00-global-acl.ldif
+#
+# Modifies the olcDatabase entry for our suffix to set fine-grained ACLs.
+# Applied to cn=config via SASL EXTERNAL (ldapmodify -Y EXTERNAL -H ldapi://).
+#
+# The string __DB_DN__ is replaced by apply-acl.sh with the real DN, e.g.
+# olcDatabase={2}mdb,cn=config.
+#
+# ACL DESIGN
+# ───────────
+# Rule evaluation order: lower index = higher priority. First match wins.
+#
+# Rule 0 — Credentials gate (highest priority)
+#   userPassword: users can only use it for authentication (anonymous bind).
+#   NOBODY can read the hash, not even the admin (belt-and-suspenders).
+#   We use cert auth, so userPassword is not required at all. This rule
+#   prevents any future accidental password storage from being readable.
+#
+# Rule 1 — Certificate attributes (the core of the zero-trust design)
+#   userCertificate, ssoCertThumbprint, ssoDeviceFingerprint, ssoEnrolledAt:
+#     • cert-writer service account CAN write (this is Vault Agent / consul-template)
+#     • admin CAN write (break-glass certificate operations)
+#     • Authenticated users (DN present) CAN read
+#     • Anonymous CAN read userCertificate only (SP and app need it pre-auth)
+#   NOBODY ELSE can write cert attributes. An attacker who steals the
+#   golang-app token, the SAML IdP key, or the PostgreSQL admin password
+#   CANNOT inject a rogue certificate into LDAP.
+#
+# Rule 2 — Service accounts subtree
+#   ou=service-accounts: only admin can manage, cert-writer can read its own
+#   entry (to authenticate). Anonymous has no access.
+#
+# Rule 3 — User entries (ou=users)
+#   Self can read/write their own entry (name, email).
+#   Authenticated users can search and read.
+#   Anonymous gets NO access to user entries (only cert attrs via Rule 1).
+#
+# Rule 4 — Groups subtree
+#   Authenticated users can read group membership.
+#   Anonymous cannot.
+#
+# Rule 5 — Catch-all
+#   Admin can manage everything. Authenticated users can read. Anonymous none.
+#
+# SINGLE-COMPROMISE ANALYSIS
+# ───────────────────────────
+# cert-writer credentials stolen: attacker can write cert attributes for ANY
+#   user. However, cert attributes are already public data — the public cert
+#   is designed to be shared. The worst the attacker can do is update a user's
+#   public cert to one the attacker controls, which would break that user's
+#   ability to authenticate until the real cert is restored. This is a
+#   denial-of-service, not an authentication bypass (the attacker still needs
+#   the private key, which is client-side).
+#
+# admin credentials stolen: same as cert-writer plus can modify DIT structure.
+#   Still cannot obtain private keys (never stored). Vault credentials are
+#   independent; PKI remains intact.
+# =============================================================================
+
+dn: __DB_DN__
+changetype: modify
+replace: olcAccess
+olcAccess: {0}to attrs=userPassword
+  by self write
+  by anonymous auth
+  by * none
+olcAccess: {1}to attrs=userCertificate,ssoCertThumbprint,ssoDeviceFingerprint,ssoEnrolledAt
+  by dn.exact="__CERT_WRITER_DN__" write
+  by dn.exact="__ADMIN_DN__" write
+  by anonymous read
+  by users read
+  by * none
+olcAccess: {2}to dn.subtree="ou=service-accounts,__LDAP_ROOT__"
+  by dn.exact="__ADMIN_DN__" manage
+  by self authenticate
+  by * none
+olcAccess: {3}to dn.subtree="ou=users,__LDAP_ROOT__"
+  by self write
+  by dn.exact="__ADMIN_DN__" manage
+  by users read
+  by * none
+olcAccess: {4}to dn.subtree="ou=groups,__LDAP_ROOT__"
+  by dn.exact="__ADMIN_DN__" manage
+  by users read
+  by * none
+olcAccess: {5}to *
+  by dn.exact="__ADMIN_DN__" manage
+  by users read
+  by * none

@@ -1,0 +1,51 @@
+{{- /*
+   cert-manifest.tmpl
+   Written by Vault Agent to /vault/rendered/cert-manifest.json.
+
+   Lists all active (non-revoked, non-CA) certificates in pki_int so the
+   Golang app can validate tokens against the cert store without a live Vault
+   connection on every request.
+
+   Thumbprint (cnf.x5t#S256) computation is intentionally deferred to the
+   Golang app — consul-template has no DER-encoding function, and the app
+   already parses the PEM cert during JWT validation.
+
+   SECURITY: all fields are public.  Private keys never appear in cert/* paths.
+
+   Field notes
+   ───────────
+   • serial        — colon-separated hex serial; used as the Vault path key
+   • cn            — x509 Subject.CommonName; must equal the PostgreSQL role name
+   • certificate   — PEM-encoded public cert (full chain included by Vault)
+   • expires_at    — Unix epoch (seconds); the app formats/parses this
+   • revoked       — true when revocation_time is non-zero (filtered out below,
+                     but left for reference if you disable the filter)
+*/ -}}
+{
+  "generated_at": "{{ timestamp "2006-01-02T15:04:05Z07:00" }}",
+  "issuer": "{{ env "DOMAIN" | or "sso.local" }} Intermediate CA",
+  "certs": [
+    {{- $first := true -}}
+    {{- range secrets "pki_int/certs/" -}}
+      {{- $serial := . -}}
+      {{- with secret (printf "pki_int/cert/%s" $serial) -}}
+        {{- if and (not .Data.revocation_time) (not .Data.is_ca) -}}
+          {{- if not $first }},{{ end -}}
+          {{- $first = false -}}
+          {{- $cn := "" -}}
+          {{- $parsed := .Data.certificate | pemCertificates -}}
+          {{- if $parsed -}}
+            {{- $cn = (index $parsed 0).Subject.CommonName -}}
+          {{- end }}
+    {
+      "serial":      "{{ $serial }}",
+      "cn":          {{ $cn | toJSON }},
+      "certificate": {{ .Data.certificate | toJSON }},
+      "expires_at":  {{ .Data.expiration }},
+      "revoked":     false
+    }
+        {{- end -}}
+      {{- end -}}
+    {{- end }}
+  ]
+}

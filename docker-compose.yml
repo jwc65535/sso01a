@@ -1,0 +1,497 @@
+---
+# docker-compose.yml — sso01a zero-trust authentication stack
+# Vault runs in dev mode (HTTP) for local bootstrap; swap the vault service
+# command to production mode once pki/scripts/bootstrap-ca.sh has run.
+
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# Named volumes
+# ---------------------------------------------------------------------------
+volumes:
+  vault-data:
+  ldap-data:
+  ldap-config:
+  ldap-sentinel:        # holds .sso-configured sentinel; prevents re-running first-run init
+  postgres-data:
+  vault-agent-token:    # single-file volume: vault writes token, agent reads it
+  consul-tmpl-certs:    # rendered public certs waiting for LDAP push
+  pki-root:             # root CA material; mounted read-only everywhere else
+  shib-keys:            # SP signing/encryption keys generated at first boot
+  idp-cert:             # IdP SAML signing cert; persisted so the SP doesn't need metadata updates on restart
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+networks:
+  frontend:             # browser → SP (port 443 only)
+    driver: bridge
+
+  proxy-backend:        # SP → app (private reverse-proxy lane)
+    driver: bridge
+    internal: true
+
+  db:                   # app → postgres (mTLS)
+    driver: bridge
+    internal: true
+
+  ldap-net:             # app + consul-template ↔ ldap
+    driver: bridge
+    internal: true
+
+  vault-net:            # vault + vault-agent + consul-template
+    driver: bridge
+    internal: true
+
+  saml-net:             # idp ↔ sp back-channel
+    driver: bridge
+    internal: true
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+services:
+
+  # ── HashiCorp Vault — dev mode (PKI engine configured by vault/scripts) ───
+  vault:
+    image: hashicorp/vault:1.17
+    container_name: sso-vault
+    hostname: vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    command:
+      - "server"
+      - "-dev"
+      - "-dev-root-token-id=${VAULT_DEV_ROOT_TOKEN_ID:-devroot}"
+      - "-dev-listen-address=0.0.0.0:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "${VAULT_DEV_ROOT_TOKEN_ID:-devroot}"
+      VAULT_LOG_LEVEL: "info"
+      # VAULT_ADDR is HTTP in dev mode
+      VAULT_ADDR: "http://127.0.0.1:8200"
+    env_file: .env
+    volumes:
+      - vault-data:/vault/data
+      - ./vault/config:/vault/config:ro
+      - ./vault/policies:/vault/policies:ro
+      - vault-agent-token:/vault/agent-token
+    networks:
+      - vault-net
+    ports:
+      - "127.0.0.1:8200:8200"   # localhost only; never expose 0.0.0.0 in prod
+    healthcheck:
+      test:
+        - "CMD"
+        - "sh"
+        - "-c"
+        - "VAULT_ADDR=http://127.0.0.1:8200 vault status | grep -q 'Initialized.*true'"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # ── Vault Agent — authenticates to Vault, writes a renewable token ───────
+  # entrypoint.sh writes $VAULT_TOKEN to /vault/agent-token/token so the
+  # token_file auth method in agent.hcl can bootstrap without AppRole secrets.
+  # In production: switch agent.hcl to the approle method and remove the
+  # VAULT_TOKEN env var from this service entirely.
+  vault-agent:
+    image: hashicorp/vault:1.17
+    container_name: sso-vault-agent
+    hostname: vault-agent
+    restart: unless-stopped
+    entrypoint: ["/vault/agent/entrypoint.sh"]
+    command: []
+    environment:
+      VAULT_ADDR: "http://vault:8200"
+      # DEV: root token passed so entrypoint.sh can write the token_file.
+      # PROD: remove this env var; inject the AppRole secret-id instead.
+      VAULT_TOKEN: "${VAULT_DEV_ROOT_TOKEN_ID:-devroot}"
+    env_file: .env
+    depends_on:
+      vault:
+        condition: service_healthy
+    volumes:
+      - ./vault/agent:/vault/agent:ro
+      - vault-agent-token:/vault/agent-token
+      - consul-tmpl-certs:/vault/rendered
+    networks:
+      - vault-net
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "test -f /vault/agent-token/agent.token"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  # ── Consul Template — watches Vault PKI, pushes public certs to LDAP ─────
+  # Reads the Vault token from the vault-agent-token volume (written by the
+  # vault-agent sink) — does NOT use the root token directly.
+  # Authenticates to LDAP as cert-writer (ACL rule 1: cert attrs only).
+  # Periodic SIGHUP every 30 min from entrypoint.sh keeps LDAP in sync even
+  # without a Vault lease event.
+  consul-template:
+    build:
+      context: ./consul-template
+      dockerfile: Dockerfile
+    image: sso01a/consul-template:local
+    container_name: sso-consul-template
+    hostname: consul-template
+    restart: unless-stopped
+    environment:
+      VAULT_ADDR: "http://vault:8200"
+      # consul-template reads its Vault token from vault_agent_token_file in
+      # consul-template.hcl — the VAULT_TOKEN env var is NOT used.
+      # cert-writer LDAP credentials (push script reads password from secret file).
+      LDAP_BIND_DN: "cn=cert-writer,ou=service-accounts,${LDAP_BASE_DN:-dc=sso,dc=local}"
+      LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=sso,dc=local}"
+      LDAP_HOST: "ldap"
+      LDAP_PORT: "1389"
+    env_file: .env
+    depends_on:
+      vault-agent:
+        condition: service_healthy   # wait until vault-agent has written agent.token
+      ldap:
+        condition: service_healthy
+    volumes:
+      - ./consul-template/config:/etc/consul-template:ro
+      - ./consul-template/templates:/etc/consul-template/templates:ro
+      - vault-agent-token:/vault/agent-token:ro
+      - consul-tmpl-certs:/vault/rendered
+    networks:
+      - vault-net
+      - ldap-net
+    secrets:
+      - ldap_cert_writer_password
+    healthcheck:
+      # Healthy once the first push script has been rendered.
+      test:
+        - "CMD-SHELL"
+        - "test -f /vault/rendered/ldap-cert-push.sh"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── OpenLDAP — public-certificate directory (no secrets stored here) ──────
+  # Custom image adds: ssoUser schema, cert-writer service account, ACLs
+  # applied to cn=config via SASL EXTERNAL during first-run init.
+  # See ldap/scripts/entrypoint.sh for the initialization sequence.
+  ldap:
+    build:
+      context: ./ldap
+      dockerfile: Dockerfile
+    image: sso01a/ldap:local
+    container_name: sso-ldap
+    hostname: ldap
+    restart: unless-stopped
+    # entrypoint.sh runs as root for first-run cn=config setup,
+    # then execs bitnami's run.sh which drops to user 1001.
+    user: "root"
+    environment:
+      LDAP_ROOT: "${LDAP_BASE_DN:-dc=sso,dc=local}"
+      LDAP_ADMIN_USERNAME: "admin"
+      # Password injected via Docker secret; bitnami reads LDAP_ADMIN_PASSWORD
+      # but our entrypoint reads /run/secrets/ldap_admin_password directly.
+      LDAP_ADMIN_PASSWORD: "${LDAP_ADMIN_PASSWORD:-changeme_replace_me}"
+      LDAP_ORGANISATION: "sso01a"
+      LDAP_LOGLEVEL: "256"
+      LDAP_ENABLE_TLS: "no"     # TLS in prod: mount Vault-issued certs
+      BITNAMI_DEBUG: "false"
+      DOMAIN: "${DOMAIN:-sso.local}"
+      # DEV: password set on alice and bob so the IdP can LDAP-authenticate them.
+      # PROD: remove this; provision real passwords via IAM / self-service portal.
+      DEV_USER_PASSWORD: "${DEV_USER_PASSWORD:-changeme}"
+    env_file: .env
+    volumes:
+      # Persistent data and config (survive container restarts)
+      - ldap-data:/bitnami/openldap/data
+      - ldap-config:/opt/bitnami/openldap/etc/openldap/slapd.d
+      # First-run sentinel survives restarts so init only runs once
+      - ldap-sentinel:/bitnami/openldap
+    networks:
+      - ldap-net
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          ldapsearch -x -H ldap://localhost:1389
+          -b '${LDAP_BASE_DN:-dc=sso,dc=local}'
+          -D 'cn=admin,${LDAP_BASE_DN:-dc=sso,dc=local}'
+          -w '${LDAP_ADMIN_PASSWORD:-changeme_replace_me}'
+          '(objectClass=organizationalUnit)' dn
+          2>/dev/null | grep -q '^dn:'
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    secrets:
+      - ldap_admin_password
+      - ldap_cert_writer_password
+
+  # ── SimpleSAMLphp IdP ────────────────────────────────────────────────────
+  # Authenticates users against OpenLDAP (LDAP bind as the user).
+  # Issues SAML 2.0 assertions signed with a self-signed RSA-3072 cert
+  # (separate from Vault PKI — intentional: different trust domain).
+  #
+  # DEV BROWSER ACCESS
+  # ───────────────────
+  # The SP redirects the browser to the IdP's SSO URL.  In dev, that URL must
+  # be reachable by the browser.  Add this line to /etc/hosts:
+  #   127.0.0.1  idp.sso.local
+  # Then set IDP_BASEURLPATH=http://idp.sso.local:8880/simplesaml/ in .env.
+  # The IdP is also reachable at http://localhost:8880/simplesaml/ directly.
+  idp:
+    build:
+      context: ./idp
+      dockerfile: Dockerfile
+    image: sso01a/idp:local
+    container_name: sso-idp
+    hostname: idp
+    restart: unless-stopped
+    environment:
+      # Docker secret file path — init.sh reads this and exports SSP_ADMIN_PASSWORD
+      SSP_ADMIN_PASSWORD_FILE: /run/secrets/ssp_admin_password
+      SSP_SECRET_SALT: "${SSP_SECRET_SALT:-CHANGE_ME_IN_PRODUCTION}"
+      # Public URL used by SSP to build redirect URLs and assertion endpoints.
+      # DEV:  http://idp.sso.local:8880/simplesaml/  (port 8880 → container 80)
+      # PROD: https://idp.sso.local/simplesaml/
+      IDP_BASEURLPATH: "${IDP_BASEURLPATH:-http://idp.sso.local:8880/simplesaml/}"
+      IDP_ENTITY_ID: "${IDP_ENTITY_ID:-https://idp.sso.local/simplesaml/saml2/idp/metadata.php}"
+      SP_ENTITY_ID: "${SP_ENTITY_ID:-https://sp.sso.local/shibboleth}"
+      SP_ACS_URL: "${SP_ACS_URL:-https://sp.sso.local/Shibboleth.sso/SAML2/POST}"
+      LDAP_HOST: "ldap"
+      LDAP_PORT: "1389"
+      LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=sso,dc=local}"
+    env_file: .env
+    depends_on:
+      ldap:
+        condition: service_healthy
+    volumes:
+      # Config and metadata are bind-mounted read-only (edit on host, reload takes effect).
+      - ./idp/config:/var/simplesamlphp/config:ro
+      - ./idp/metadata:/var/simplesamlphp/metadata:ro
+      # SAML signing cert is persisted in a named volume.
+      # Changing the cert requires updating the SP's metadata (saml20-sp-remote.php
+      # certData field in Prompt 8).  Never delete this volume carelessly.
+      - idp-cert:/var/simplesamlphp/cert
+    networks:
+      - saml-net
+      - frontend
+      - ldap-net
+    ports:
+      # DEV: expose IdP on localhost:8880 for browser redirect access.
+      # PROD: remove this port binding; route via reverse proxy instead.
+      - "127.0.0.1:8880:80"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:80/simplesaml/module.php/core/welcome"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    secrets:
+      - ssp_admin_password
+      - ldap_admin_password
+
+  # ── Shibboleth SP + Apache HTTPD ─────────────────────────────────────────
+  sp:
+    build:
+      context: ./sp
+      dockerfile: Dockerfile
+    image: sso01a/sp:local
+    container_name: sso-sp
+    hostname: sp
+    restart: unless-stopped
+    environment:
+      SP_HOSTNAME: "${SP_HOSTNAME:-sp.sso.local}"
+      SP_ENTITY_ID: "${SP_ENTITY_ID:-https://sp.sso.local/shibboleth}"
+      IDP_ENTITY_ID: "${IDP_ENTITY_ID:-https://idp.sso.local/simplesaml/saml2/idp/metadata.php}"
+      IDP_METADATA_URL: "http://idp/simplesaml/saml2/idp/metadata.php"
+      APP_BACKEND: "http://app:8080"
+      LDAP_HOST: "ldap"
+      LDAP_PORT: "1389"
+      LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=sso,dc=local}"
+    env_file: .env
+    depends_on:
+      idp:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    volumes:
+      # Source dir: bind-mounted read-only; init.sh copies + envsubsts into /etc/shibboleth/
+      - ./sp/shibboleth:/etc/shibboleth-src:ro
+      - ./sp/apache/vhosts:/etc/apache2/sites-enabled:ro
+      - shib-keys:/etc/shibboleth/keys    # generated at first boot, persisted
+      # SPA static files — served directly by Apache at DocumentRoot /var/www/html.
+      # The client nginx (port 3000) serves the same files for UI-only development;
+      # full SAML auth only works from https://sp.sso.local (same-origin cookie).
+      - ./client/src:/var/www/html:ro
+    networks:
+      - frontend
+      - proxy-backend
+      - saml-net
+      - ldap-net
+    ports:
+      - "80:80"
+      - "443:443"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ── Golang Application Server ─────────────────────────────────────────────
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: sso01a/app:local
+    container_name: sso-app
+    hostname: app
+    restart: unless-stopped
+    environment:
+      APP_PORT: "${APP_PORT:-8080}"
+      APP_ENV: "${APP_ENV:-development}"
+      VAULT_ADDR: "http://vault:8200"
+      VAULT_TOKEN: "${VAULT_DEV_ROOT_TOKEN_ID:-devroot}"
+      # Vault PKI — intermediate CA mount + role used to sign user CSRs.
+      VAULT_PKI_INT_MOUNT: "${VAULT_PKI_INT_MOUNT:-pki_int}"
+      VAULT_PKI_ROLE: "${VAULT_PKI_ROLE:-user-cert}"
+      VAULT_CERT_TTL: "${VAULT_CERT_TTL:-1h}"     # 1h — user cert expires with JWT session
+      # DEV: connects as sso_app via scram-sha-256 (no TLS); pg_hba.conf allows
+      #      this from any IP on the internal Docker bridge network.
+      # PROD: change sslmode=verify-full and supply sslcert/sslkey/sslrootcert
+      #       so the Golang app presents its own Vault-issued client cert (CN=sso_app).
+      POSTGRES_DSN: "host=postgres port=5432 dbname=${POSTGRES_DB:-sso} user=sso_app sslmode=${POSTGRES_SSL_MODE:-disable}"
+      # App reads its DB password from the Docker secret file at startup.
+      POSTGRES_APP_PASSWORD_FILE: /run/secrets/postgres_app_password
+      # Per-user x509 connection factory — separate host/port/dbname so the
+      # factory can build individual pgx.Conn objects with per-user TLS certs.
+      PG_HOST: "postgres"
+      PG_PORT: "5432"
+      PG_DBNAME: "${POSTGRES_DB:-sso}"
+      LDAP_HOST: "ldap"
+      LDAP_PORT: "1389"
+      LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=sso,dc=local}"
+      JWT_ISSUER: "${JWT_ISSUER:-https://sp.sso.local}"
+      JWT_AUDIENCE: "${JWT_AUDIENCE:-https://app.sso.local}"
+      JWT_TTL: "${JWT_TTL:-3600}"
+      # TOTP-derived key sealing — masterSecret read from Docker secret file.
+      TOTP_MASTER_SECRET_FILE: /run/secrets/totp_master_secret
+      TOTP_ALGORITHM: "${TOTP_ALGORITHM:-SHA256}"
+      TOTP_DIGITS: "${TOTP_DIGITS:-8}"
+      TOTP_PERIOD: "${TOTP_PERIOD:-30}"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    volumes:
+      - consul-tmpl-certs:/certs:ro
+    secrets:
+      - postgres_app_password
+      - totp_master_secret
+    networks:
+      - proxy-backend
+      - db
+      - ldap-net
+      - vault-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── PostgreSQL — per-user roles, certificate authentication only ──────────
+  # pg_hba.conf enforces:
+  #   • sso_admin:  scram-sha-256, localhost only (maintenance)
+  #   • sso_app:    scram-sha-256 from internal Docker net (dev); cert in prod
+  #   • all others: hostssl + client cert (CN must match a provisioned role)
+  # TLS certs are pre-populated by `make pki-bootstrap` into postgres/ssl/.
+  # If postgres/ssl/ is empty, TLS is disabled and only sso_admin/sso_app work.
+  postgres:
+    build:
+      context: ./postgres
+      dockerfile: Dockerfile
+    image: sso01a/postgres:local
+    container_name: sso-postgres
+    hostname: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-sso}"
+      POSTGRES_USER: "${POSTGRES_ADMIN_USER:-sso_admin}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+      # POSTGRES_HOST_AUTH_METHOD controls the auth method initdb writes into
+      # the auto-generated pg_hba.conf.  Our 00-hba.sh REPLACES that file, so
+      # this value only matters during the initdb trust phase.
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256"
+    env_file: .env
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # ssl/: bind-mount of host postgres/ssl/ directory.
+      # Populated by `make pki-bootstrap` with:
+      #   server.crt, server.key  — Vault-issued server cert (CN=postgres)
+      #   ca-chain.pem            — Vault intermediate CA chain (verifies client certs)
+      #   crl.pem                 — CRL (populated by make cert-push-now; optional)
+      - ./postgres/ssl:/var/lib/postgresql/ssl:ro
+    networks:
+      - db
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "pg_isready -U ${POSTGRES_ADMIN_USER:-sso_admin} -d ${POSTGRES_DB:-sso}"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    secrets:
+      - postgres_admin_password
+      - postgres_app_password
+
+  # ── Client SPA — nginx serving FingerprintJS frontend ────────────────────
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    image: sso01a/client:local
+    container_name: sso-client
+    hostname: client
+    restart: unless-stopped
+    environment:
+      FPJS_API_KEY: "${FPJS_API_KEY:-}"
+      SP_BASE_URL: "https://${SP_HOSTNAME:-sp.sso.local}"
+    env_file: .env
+    volumes:
+      - ./client/nginx:/etc/nginx/conf.d:ro
+    networks:
+      - frontend
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+# ---------------------------------------------------------------------------
+# Docker secrets
+# ---------------------------------------------------------------------------
+secrets:
+  ldap_admin_password:
+    file: ./secrets/ldap_admin_password.txt
+  ldap_cert_writer_password:
+    file: ./secrets/ldap_cert_writer_password.txt
+  postgres_admin_password:
+    file: ./secrets/postgres_admin_password.txt
+  postgres_app_password:
+    file: ./secrets/postgres_app_password.txt
+  ssp_admin_password:
+    file: ./secrets/ssp_admin_password.txt
+  totp_master_secret:
+    file: ./secrets/totp_master_secret.txt

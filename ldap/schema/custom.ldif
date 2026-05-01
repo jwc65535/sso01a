@@ -1,0 +1,33 @@
+# ldap/schema/custom.ldif
+# Extends the standard inetOrgPerson schema with SSO-specific attributes.
+# The `userCertificate` attribute is already part of the standard schema
+# (RFC 4523 / OID 2.5.4.36); this file adds our custom ones.
+
+dn: cn=sso01a,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: sso01a
+
+# deviceFingerprint — FingerprintJS visitor ID (string, single-valued per cert)
+olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.1
+  NAME 'ssoDeviceFingerprint'
+  DESC 'FingerprintJS device fingerprint bound to the enrolled x509 cert'
+  EQUALITY caseIgnoreMatch
+  SUBSTR caseIgnoreSubstringsMatch
+  SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256}
+  SINGLE-VALUE )
+
+# certThumbprint — x5t#S256 SHA-256 thumbprint of the public cert (base64url)
+olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.2
+  NAME 'ssoCertThumbprint'
+  DESC 'SHA-256 thumbprint of the enrolled x509 certificate (RFC 7638 / RFC 7800)'
+  EQUALITY caseIgnoreMatch
+  SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{128}
+  SINGLE-VALUE )
+
+# ssoUser auxiliary class — adds our custom attributes to inetOrgPerson
+olcObjectClasses: ( 1.3.6.1.4.1.99999.2.1
+  NAME 'ssoUser'
+  DESC 'Auxiliary class for zero-trust SSO attributes'
+  SUP top
+  AUXILIARY
+  MAY ( ssoDeviceFingerprint $ ssoCertThumbprint ) )

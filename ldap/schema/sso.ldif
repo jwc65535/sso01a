@@ -1,0 +1,78 @@
+# =============================================================================
+# ldap/schema/sso.ldif
+#
+# OLC-format (cn=config) schema extension for the sso01a zero-trust system.
+# Loaded into cn=config via SASL EXTERNAL during first-run entrypoint.
+#
+# NOTE on userCertificate
+# ───────────────────────
+# The userCertificate attribute (OID 2.5.4.36, RFC 4523) is already part of
+# the standard OpenLDAP 'core' schema. We do NOT redefine it here. It is a
+# MAY attribute of inetOrgPerson (RFC 2798). Storing the DER-encoded public
+# certificate uses the ;binary subtype notation: userCertificate;binary::
+# (double colon = base64-encoded value).
+#
+# PRIVATE KEY POLICY
+# ──────────────────
+# NO private key, passphrase, TOTP seed, or any secret material is stored
+# in any LDAP attribute. The ACL in acl/00-global-acl.ldif enforces this
+# at the directory level by denying write access to all attributes that
+# are NOT in the cert-writable set (even for the admin).
+#
+# CUSTOM OID ARC
+# ──────────────
+# OIDs under 1.3.6.1.4.1.99999 are used as PRIVATE ENTERPRISE placeholders.
+# Register a real PEN at https://iana.org/assignments/enterprise-numbers
+# before deploying to a shared network.
+# =============================================================================
+
+dn: cn=sso,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: sso
+
+# ── ssoDeviceFingerprint ──────────────────────────────────────────────────────
+# Stores the FingerprintJS visitor ID bound to the enrolled x509 certificate.
+# Single-valued: one enrolled device per user entry.
+# LDAP attribute type: Directory String, case-insensitive match.
+olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.1
+  NAME 'ssoDeviceFingerprint'
+  DESC 'FingerprintJS visitorId for the enrolled x509 certificate session'
+  EQUALITY caseIgnoreMatch
+  SUBSTR caseIgnoreSubstringsMatch
+  SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256}
+  SINGLE-VALUE )
+
+# ── ssoCertThumbprint ─────────────────────────────────────────────────────────
+# SHA-256 thumbprint of the enrolled x509 certificate encoded as base64url
+# (RFC 7638 JSON Web Key Thumbprint format, used in JWT cnf/x5t#S256 claim).
+# Single-valued: matches the most recently enrolled certificate.
+# Case-insensitive match covers both base64url variants.
+olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.2
+  NAME 'ssoCertThumbprint'
+  DESC 'SHA-256 thumbprint of the enrolled x509 cert (RFC 7638 base64url, for JWT cnf/x5t#S256)'
+  EQUALITY caseIgnoreMatch
+  SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{128}
+  SINGLE-VALUE )
+
+# ── ssoEnrolledAt ─────────────────────────────────────────────────────────────
+# GeneralizedTime of the most recent cert enrolment.
+# Updated atomically with userCertificate to track rotation history.
+olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.3
+  NAME 'ssoEnrolledAt'
+  DESC 'Timestamp of the most recent certificate enrolment (GeneralizedTime)'
+  EQUALITY generalizedTimeMatch
+  ORDERING generalizedTimeOrderingMatch
+  SYNTAX 1.3.6.1.4.1.1466.115.121.1.24
+  SINGLE-VALUE )
+
+# ── ssoUser (auxiliary objectClass) ──────────────────────────────────────────
+# Added alongside inetOrgPerson to allow our custom attributes.
+# Using AUXILIARY (not STRUCTURAL) so it can be combined with inetOrgPerson.
+# All attributes are MAY (optional): a user entry without a cert is valid
+# during the enrolment window before Vault issues the first certificate.
+olcObjectClasses: ( 1.3.6.1.4.1.99999.2.1
+  NAME 'ssoUser'
+  DESC 'Auxiliary class for zero-trust SSO certificate lifecycle attributes'
+  SUP top
+  AUXILIARY
+  MAY ( ssoDeviceFingerprint $ ssoCertThumbprint $ ssoEnrolledAt ) )

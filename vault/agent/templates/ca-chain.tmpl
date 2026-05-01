@@ -1,0 +1,15 @@
+{{- /*
+   ca-chain.tmpl
+   Renders the full trust chain: intermediate CA cert + root CA cert.
+   Written to /vault/rendered/ca-chain.pem.
+
+   Consumers:
+     - PostgreSQL: ssl_ca_file (verify client certs against this chain)
+     - Golang app: x509.CertPool for mTLS verification
+     - Shibboleth SP: LDAP TLS trust anchor
+
+   SECURITY: public data only — no private keys in this template.
+*/ -}}
+{{- with secret "pki_int/cert/ca_chain" -}}
+{{ .Data.certificate }}
+{{- end }}

@@ -1,0 +1,6 @@
+# sample-users.txt
+# One UID per line. Lines starting with # are ignored.
+# These users receive self-signed development certs during first-run init.
+# In production, remove this file and let Vault+consul-template manage certs.
+alice
+bob
