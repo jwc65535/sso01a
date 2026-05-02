@@ -72,13 +72,23 @@ die()    { red "[bootstrap] ✗ $*"; exit 1; }
 enable_secrets() {
     local path="$1" type="$2"
     shift 2
-    if vault secrets list -format=json 2>/dev/null \
-            | jq -r 'keys[]' | grep -q "^${path}/$"; then
+    local existing
+    existing=$(vault secrets list -format=json 2>/dev/null) || existing='{}'
+    if printf '%s\n' "${existing}" | jq -r 'keys[]' 2>/dev/null \
+            | grep -q "^${path}/$"; then
+        warn "secrets engine ${path}/ already enabled — skipping enable."
+        return 0
+    fi
+    info "Enabling secrets engine '${type}' at ${path}/..."
+    local out rc=0
+    out=$(vault secrets enable -path="${path}" "$@" "${type}" 2>&1) || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        ok "secrets/${path}/ enabled."
+    elif printf '%s\n' "${out}" | grep -q "path is already in use"; then
         warn "secrets engine ${path}/ already enabled — skipping enable."
     else
-        info "Enabling secrets engine '${type}' at ${path}/..."
-        vault secrets enable -path="${path}" "$@" "${type}"
-        ok "secrets/${path}/ enabled."
+        printf '%s\n' "${out}" >&2
+        die "Failed to enable secrets engine '${type}' at ${path}/."
     fi
 }
 
@@ -86,13 +96,23 @@ enable_secrets() {
 enable_auth() {
     local path="$1" type="$2"
     shift 2
-    if vault auth list -format=json 2>/dev/null \
-            | jq -r 'keys[]' | grep -q "^${path}/$"; then
+    local existing
+    existing=$(vault auth list -format=json 2>/dev/null) || existing='{}'
+    if printf '%s\n' "${existing}" | jq -r 'keys[]' 2>/dev/null \
+            | grep -q "^${path}/$"; then
+        warn "auth method ${path}/ already enabled — skipping enable."
+        return 0
+    fi
+    info "Enabling auth method '${type}' at ${path}/..."
+    local out rc=0
+    out=$(vault auth enable -path="${path}" "$@" "${type}" 2>&1) || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        ok "auth/${path}/ enabled."
+    elif printf '%s\n' "${out}" | grep -q "path is already in use"; then
         warn "auth method ${path}/ already enabled — skipping enable."
     else
-        info "Enabling auth method '${type}' at ${path}/..."
-        vault auth enable -path="${path}" "$@" "${type}"
-        ok "auth/${path}/ enabled."
+        printf '%s\n' "${out}" >&2
+        die "Failed to enable auth method '${type}' at ${path}/."
     fi
 }
 
