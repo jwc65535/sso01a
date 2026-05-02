@@ -1,48 +1,78 @@
 # =============================================================================
 # ldap/Dockerfile
 #
-# Extends bitnami/openldap:2 with:
+# Builds a custom OpenLDAP container from debian:bookworm-slim with:
 #   • Custom ssoUser schema (ssoDeviceFingerprint, ssoCertThumbprint)
 #   • Dedicated entrypoint that applies cn=config ACLs via SASL EXTERNAL
-#     (requires running as root before bitnami's run.sh drops privileges)
 #   • openssl for sample certificate generation during first-run init
 #   • ldap-utils (ldapmodify/ldapadd) for runtime cert-push operations
 #
+# SINGLE-MODULE COMPROMISE ANALYSIS
+# ──────────────────────────────────
+# This container stores only public certificates and LDAP metadata.
+# If fully owned, an attacker can:
+#   CAN:  Read userCertificate (DER-encoded public cert — not secret)
+#   CAN:  Modify ssoCertThumbprint / ssoDeviceFingerprint (DoS: breaks enrolment)
+#   CAN:  Delete user entries (DoS: prevents authentication)
+#   CANNOT: Retrieve any private key (none stored here)
+#   CANNOT: Forge JWTs (no signing key here)
+#   CANNOT: Authenticate as a user without a valid x509 client cert + private key
+#   CANNOT: Access Vault, PostgreSQL, or the Go app directly
+#
 # SECURITY NOTE
 # ─────────────
-# The container runs as root during FIRST-RUN ONLY so that SASL EXTERNAL
+# The container runs slapd as root during FIRST-RUN ONLY so SASL EXTERNAL
 # on ldapi:// has rootDN authority over cn=config. Once ACLs are written,
-# the sentinel /bitnami/openldap/.sso-configured is created and subsequent
-# starts use bitnami's standard (non-root) run.sh.
+# the sentinel /var/lib/ldap-sentinel/.sso-configured is set and subsequent
+# starts exec slapd as the openldap user.
 # Private keys and passphrases are NEVER written to any LDAP attribute.
+#
+# BASE IMAGE CHOICE
+# ─────────────────
+# Previously used bitnami/openldap:2, which was removed from Docker Hub.
+# Now uses debian:bookworm-slim + slapd from the Debian package repository.
+# dpkg-reconfigure slapd is called at first-run (runtime) from entrypoint.sh
+# using the actual admin password from the Docker secret — never baked into
+# the image.  This avoids any third-party wrapper image dependency.
 # =============================================================================
-FROM bitnami/openldap:2
+FROM debian:bookworm-slim
 
-USER root
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        openssl \
+# Install slapd without initial configuration (no_configuration=true prevents
+# postinst from running dpkg-reconfigure, so no stale config is baked in).
+# dpkg-reconfigure is called at container first-run with the real admin password.
+RUN echo "slapd slapd/no_configuration boolean true" | debconf-set-selections \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+        slapd \
         ldap-utils \
+        openssl \
         gosu \
-    && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/*
+
+# Ensure the ldapi socket directory exists with correct ownership.
+# /var/run is typically tmpfs in containers, so the entrypoint re-creates
+# this directory on every start before starting slapd.
+RUN mkdir -p /var/run/slapd \
+ && chown openldap:openldap /var/run/slapd
 
 # ── Schema ────────────────────────────────────────────────────────────────────
-# sso.ldif is applied to cn=config by entrypoint.sh (not by bitnami's setup)
+# sso.ldif is loaded into cn=config via SASL EXTERNAL during first-run.
 COPY schema/sso.ldif      /etc/ldap/schema/sso.ldif
 
 # ── ACL ───────────────────────────────────────────────────────────────────────
 COPY acl/                 /etc/ldap/acl/
 
 # ── Bootstrap data LDIF ───────────────────────────────────────────────────────
-# bitnami's setup.sh loads files from /docker-entrypoint-initdb.d/ using
-# ldapadd as the data-tree admin. Data-only LDIF goes here.
-COPY bootstrap/           /docker-entrypoint-initdb.d/
+# entrypoint.sh loads these via ldapmodify after first-run slapd init.
+COPY bootstrap/           /etc/ldap/bootstrap/
 
 # ── Scripts ───────────────────────────────────────────────────────────────────
 COPY scripts/             /etc/ldap/scripts/
 RUN  chmod +x /etc/ldap/scripts/*.sh
 
-EXPOSE 1389 1636
+EXPOSE 1389
 
 ENTRYPOINT ["/etc/ldap/scripts/entrypoint.sh"]
 CMD []

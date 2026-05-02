@@ -44,19 +44,12 @@ chmod 700 "${KEY_DIR}"
 for purpose in sp-signing sp-encrypt; do
     if [ ! -f "${KEY_DIR}/${purpose}.key" ] || [ ! -f "${KEY_DIR}/${purpose}.crt" ]; then
         info "Generating Shibboleth SP key pair: ${purpose} (RSA-3072, 10 years)..."
-        if command -v shib-keygen >/dev/null 2>&1; then
-            shib-keygen \
-                -n "${purpose}" \
-                -o "${KEY_DIR}" \
-                -h "${SP_HOSTNAME}" \
-                -y 10 \
-                -f 2>/dev/null
-        else
-            openssl req -newkey rsa:3072 -nodes -x509 -days 3650 \
-                -subj "/CN=${SP_HOSTNAME}/O=sso01a SP" \
-                -keyout "${KEY_DIR}/${purpose}.key" \
-                -out    "${KEY_DIR}/${purpose}.crt"
-        fi
+        # Always use openssl: shib-keygen creates .pem files but shibboleth2.xml
+        # (and this script's chmod below) expect .key/.crt extensions.
+        openssl req -newkey rsa:3072 -nodes -x509 -days 3650 \
+            -subj "/CN=${SP_HOSTNAME}/O=sso01a SP" \
+            -keyout "${KEY_DIR}/${purpose}.key" \
+            -out    "${KEY_DIR}/${purpose}.crt"
         chmod 600 "${KEY_DIR}/${purpose}.key"
         chmod 644 "${KEY_DIR}/${purpose}.crt"
         ok "Generated ${purpose} key pair."

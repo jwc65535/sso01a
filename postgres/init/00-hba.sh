@@ -13,9 +13,9 @@ echo "[00-hba] Custom pg_hba.conf installed."
 
 # ── 2. Install pg_ident.conf ssl map ──────────────────────────────────────────
 # Map format: MAPNAME  SYSTEM-USERNAME  PG-USERNAME
-# "ssl" map: the certificate CN is used verbatim as the PostgreSQL role name.
-# PostgreSQL POSIX regex with backreference: /^(.*)$/ captures the full CN.
-# This means cert CN "alice" → role "alice" (role must exist; created at enrolment).
+# "ssl" map: PG passes the full cert identity as "CN=<value>"; the regex
+# strips the "CN=" prefix so only the value is used as the PG role name.
+# This means cert CN "alice" → identity "CN=alice" → role "alice".
 #
 # SECURITY NOTE: CN validation happens at two layers:
 #   1. Vault PKI role restricts which CNs can be issued (allowed_domains).
@@ -24,8 +24,8 @@ echo "[00-hba] Custom pg_hba.conf installed."
 cat >> "${PGDATA}/pg_ident.conf" << 'EOF'
 
 # MAPNAME   SYSTEM-USERNAME   PG-USERNAME
-# ssl map: cert CN must exactly match the PostgreSQL role name
-ssl         /^(.*)$/          \1
+# ssl map: cert identity is "CN=<value>"; strip prefix to get PG role name
+ssl         /^CN=(.*)$/       \1
 EOF
 echo "[00-hba] pg_ident.conf ssl map appended."
 
@@ -38,11 +38,8 @@ echo "[00-hba] pg_ident.conf ssl map appended."
 #   • sso_app can still connect (scram-sha-256, any internal IP)
 #   • User cert-auth connections will be rejected (no TLS = hostssl unreachable)
 if [ -f "${SSL_DIR}/server.crt" ] && [ -f "${SSL_DIR}/server.key" ] \
-        && [ -f "${SSL_DIR}/ca-chain.pem" ]; then
-
-    # Enforce 0600 on the key — PostgreSQL refuses to start if the key is
-    # world-readable, even in a container.
-    chmod 600 "${SSL_DIR}/server.key"
+        && [ -f "${SSL_DIR}/ca-chain.pem" ] \
+        && chmod 600 "${SSL_DIR}/server.key" 2>/dev/null; then
 
     # Append to postgresql.conf; last occurrence of a setting wins.
     # Using include file avoids conflicts with the auto-generated settings.

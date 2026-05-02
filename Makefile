@@ -59,15 +59,53 @@ logs-%: ## Tail logs for a specific service  (e.g. make logs-vault)
 # ---------------------------------------------------------------------------
 
 .PHONY: bootstrap
-bootstrap: _check-deps _gen-secrets pki-bootstrap vault-init ldap-bootstrap postgres-bootstrap ## Full first-run bootstrap (manual, step-by-step)
-	@echo "$(GREEN)Bootstrap complete. Run: make up$(RESET)"
+bootstrap: _check-deps _gen-secrets pki-bootstrap ## Full first-run bootstrap — starts infra, initialises, then brings up all services
+	@# Phase 1: bring up the three infra services in parallel
+	@echo "$(CYAN)Phase 1: Starting vault, ldap, postgres...$(RESET)"
+	$(COMPOSE) -p $(PROJECT) up -d vault ldap postgres
+	@# Wait for Vault (dev mode is fast — usually < 10 s)
+	@echo "$(CYAN)Waiting for Vault (up to 90 s)...$(RESET)"
+	@elapsed=0; \
+	until $(COMPOSE) -p $(PROJECT) exec -T vault \
+	        sh -c 'VAULT_ADDR=http://127.0.0.1:8200 vault status 2>/dev/null | grep -q "Initialized.*true"'; do \
+	    elapsed=$$((elapsed + 3)); \
+	    [ $$elapsed -ge 90 ] && echo "$(RED)Vault did not become ready$(RESET)" && exit 1; \
+	    sleep 3; \
+	done
+	@echo "$(GREEN)Vault ready.$(RESET)"
+	@# Phase 2: run PKI bootstrap inside the running Vault container
+	@$(MAKE) -s vault-init
+	@# Phase 3: wait for LDAP first-run init, then start Vault Agent
+	@$(MAKE) -s ldap-bootstrap
+	@echo "$(CYAN)Starting vault-agent...$(RESET)"
+	$(COMPOSE) -p $(PROJECT) up -d vault-agent
+	@echo "$(CYAN)Waiting for vault-agent token (up to 60 s)...$(RESET)"
+	@elapsed=0; \
+	until $(COMPOSE) -p $(PROJECT) exec -T vault-agent \
+	        test -f /vault/agent-token/agent.token 2>/dev/null; do \
+	    elapsed=$$((elapsed + 3)); \
+	    [ $$elapsed -ge 60 ] && echo "$(RED)Vault Agent did not write token$(RESET)" && exit 1; \
+	    sleep 3; \
+	done
+	@echo "$(GREEN)Vault Agent ready.$(RESET)"
+	@# Phase 4: set sso_app password + copy CA chain from vault-agent to postgres/ssl/
+	@$(MAKE) -s postgres-bootstrap
+	@# Phase 5: bring up all remaining services
+	@echo "$(CYAN)Phase 5: Starting remaining services (consul-template, idp, app, sp, client)...$(RESET)"
+	$(COMPOSE) -p $(PROJECT) up -d
+	@echo ""
+	@echo "$(GREEN)Bootstrap complete!$(RESET)"
+	@echo "  Tail logs : make logs"
+	@echo "  Run tests : make test-flow  (after adding sp.sso.local to /etc/hosts)"
+	@echo "  SP cert   : make sp-cert-extract  (then restart IdP)"
 
 .PHONY: bootstrap-all
-bootstrap-all: ## Fully automated first-run bootstrap (start services + wait for healthy + run init steps)
+bootstrap-all: ## Fully automated first-run bootstrap via shell script (equivalent to 'make bootstrap')
 	bash scripts/bootstrap-all.sh
 
 .PHONY: _gen-secrets
-_gen-secrets: ## Generate Docker secret files (passwords, seeds)
+_gen-secrets: ## Generate Docker secret files (passwords, seeds) and ensure .env exists
+	@[ -f .env ] || { cp .env.example .env; echo "$(YELLOW).env created from .env.example — review before production use$(RESET)"; }
 	@mkdir -p secrets
 	@[ -f secrets/ldap_admin_password.txt ]         || openssl rand -base64 32 > secrets/ldap_admin_password.txt
 	@[ -f secrets/ldap_cert_writer_password.txt ]   || openssl rand -base64 32 > secrets/ldap_cert_writer_password.txt
@@ -81,7 +119,7 @@ _gen-secrets: ## Generate Docker secret files (passwords, seeds)
 	@if grep -q '^VAULT_DEV_ROOT_TOKEN_ID=' .env 2>/dev/null; then \
 	    sed -i "s|^VAULT_DEV_ROOT_TOKEN_ID=.*|VAULT_DEV_ROOT_TOKEN_ID=$$(cat secrets/vault-root-token.txt)|" .env; \
 	fi
-	@chmod 600 secrets/*.txt
+	@chmod 644 secrets/*.txt
 	@echo "$(GREEN)Secret files ready.$(RESET)"
 
 .PHONY: pki-bootstrap
@@ -91,12 +129,15 @@ pki-bootstrap: ## Bootstrap root CA and generate Vault TLS certificates
 .PHONY: vault-init
 vault-init: ## Initialise Vault dev token + run full PKI bootstrap
 	@echo "$(CYAN)Running Vault bootstrap (dev mode)...$(RESET)"
+	@# Install bash + jq in the Alpine-based vault container (lost on restart, only needed here)
+	$(COMPOSE) -p $(PROJECT) exec -T vault sh -c \
+	    "apk update -q >/dev/null 2>&1 && apk add -q --no-cache bash jq >/dev/null 2>&1 || true"
 	$(COMPOSE) -p $(PROJECT) exec \
-	    -e VAULT_ADDR=http://vault:8200 \
+	    -e VAULT_ADDR=http://127.0.0.1:8200 \
 	    -e VAULT_TOKEN=$(shell cat secrets/vault-root-token.txt 2>/dev/null || echo devroot) \
 	    -e DOMAIN=$(shell grep ^DOMAIN .env 2>/dev/null | cut -d= -f2 || echo sso.local) \
 	    -e APP_ENV=$(shell grep ^APP_ENV .env 2>/dev/null | cut -d= -f2 || echo development) \
-	    vault sh /vault/scripts/init.sh
+	    vault bash /vault/scripts/init.sh
 	@echo "$(GREEN)Vault PKI bootstrap complete.$(RESET)"
 
 .PHONY: vault-status
@@ -115,8 +156,8 @@ ldap-bootstrap: ## Wait for LDAP first-run init to complete (entrypoint handles 
 	@echo "$(CYAN)Waiting for LDAP first-run initialisation...$(RESET)"
 	@until $(COMPOSE) -p $(PROJECT) exec -T ldap \
 	    ldapsearch -x -H ldap://localhost:1389 \
-	    -b "$$(grep ^LDAP_BASE_DN .env 2>/dev/null | cut -d= -f2 || echo dc=sso,dc=local)" \
-	    -D "cn=admin,$$(grep ^LDAP_BASE_DN .env 2>/dev/null | cut -d= -f2 || echo dc=sso,dc=local)" \
+	    -b "$$(grep ^LDAP_BASE_DN .env 2>/dev/null | cut -d= -f2- || echo dc=sso,dc=local)" \
+	    -D "cn=admin,$$(grep ^LDAP_BASE_DN .env 2>/dev/null | cut -d= -f2- || echo dc=sso,dc=local)" \
 	    -w "$$(cat secrets/ldap_admin_password.txt 2>/dev/null)" \
 	    '(objectClass=organizationalUnit)' dn 2>/dev/null | grep -q '^dn:'; do \
 	    sleep 3; \
@@ -127,11 +168,14 @@ ldap-bootstrap: ## Wait for LDAP first-run init to complete (entrypoint handles 
 postgres-bootstrap: ## Set sso_app password and copy Vault CA chain into postgres/ssl/
 	@echo "$(CYAN)Setting sso_app password...$(RESET)"
 	@APP_PW="$$(cat secrets/postgres_app_password.txt 2>/dev/null)"; \
+	ADMIN_PW="$$(cat secrets/postgres_admin_password.txt 2>/dev/null)"; \
 	if [ -z "$$APP_PW" ]; then \
 	    echo "$(RED)secrets/postgres_app_password.txt missing — run make _gen-secrets first$(RESET)"; \
 	    exit 1; \
 	fi; \
-	$(COMPOSE) -p $(PROJECT) exec -T postgres \
+	$(COMPOSE) -p $(PROJECT) exec -T \
+	    -e PGPASSWORD="$$ADMIN_PW" \
+	    postgres \
 	    psql -U "$${POSTGRES_ADMIN_USER:-sso_admin}" -d "$${POSTGRES_DB:-sso}" \
 	    -c "ALTER ROLE sso_app PASSWORD '$$APP_PW';"
 	@echo "$(CYAN)Copying Vault CA chain to postgres/ssl/...$(RESET)"
@@ -151,7 +195,9 @@ postgres-bootstrap: ## Set sso_app password and copy Vault CA chain into postgre
 postgres-crl-update: ## Refresh the CRL in postgres/ssl/ from vault-agent rendered output
 	@$(COMPOSE) -p $(PROJECT) exec -T vault-agent cat /vault/rendered/crl.pem \
 	    > postgres/ssl/crl.pem
-	@$(COMPOSE) -p $(PROJECT) exec -T postgres \
+	@$(COMPOSE) -p $(PROJECT) exec -T \
+	    -e PGPASSWORD="$$(cat secrets/postgres_admin_password.txt 2>/dev/null)" \
+	    postgres \
 	    psql -U "$${POSTGRES_ADMIN_USER:-sso_admin}" -d "$${POSTGRES_DB:-sso}" \
 	    -c "SELECT pg_reload_conf();"
 	@echo "$(GREEN)CRL updated and PostgreSQL reloaded.$(RESET)"
@@ -200,13 +246,13 @@ test-flow: ## End-to-end smoke test: JWT issuance → userinfo → sessions → 
 	@echo "$(CYAN)Running end-to-end auth flow tests...$(RESET)"
 	bash tests/scripts/test-flow.sh
 	@echo "$(CYAN)Running Go integration tests against live stack...$(RESET)"
-	TEST_STACK_RUNNING=1 go test ./tests/integration/ -v -count=1 -timeout 120s
+	cd tests && TEST_STACK_RUNNING=1 go test ./integration/ -v -count=1 -timeout 120s
 
 .PHONY: security-test
 security-test: ## Run security validation test suite (stack must be running)
 	@echo "$(CYAN)Running security validation tests...$(RESET)"
-	TEST_STACK_RUNNING=1 SP_BASE_URL=https://${SP_HOSTNAME:-sp.sso.local} \
-	    go test ./tests/integration/ -v -run TestSecurity -count=1 -timeout 120s
+	cd tests && TEST_STACK_RUNNING=1 SP_BASE_URL=https://${SP_HOSTNAME:-sp.sso.local} \
+	    go test ./integration/ -v -run TestSecurity -count=1 -timeout 120s
 
 .PHONY: harden
 harden: ## Apply post-bootstrap Vault hardening (audit backend, cert TTL, blast-radius checks)
@@ -257,7 +303,7 @@ test-mtls: ## Smoke-test mTLS client-certificate authentication to PostgreSQL
 test-ldap-acl: ## Verify LDAP ACL rules (stack must be running)
 	@LDAP_HOST=localhost \
 	 LDAP_PORT=1389 \
-	 LDAP_BASE_DN=$$(grep ^LDAP_BASE_DN .env 2>/dev/null | cut -d= -f2 || echo dc=sso,dc=local) \
+	 LDAP_BASE_DN=$$(grep ^LDAP_BASE_DN .env 2>/dev/null | cut -d= -f2- || echo dc=sso,dc=local) \
 	 LDAP_ADMIN_PASSWORD=$$(cat secrets/ldap_admin_password.txt 2>/dev/null) \
 	 LDAP_CERT_WRITER_PASSWORD=$$(cat secrets/ldap_cert_writer_password.txt 2>/dev/null) \
 	 bash ldap/tests/verify-acl.sh

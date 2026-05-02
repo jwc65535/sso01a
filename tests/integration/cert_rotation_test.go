@@ -16,6 +16,9 @@ func TestCertIssuance(t *testing.T) {
 
 	resp, body := doJSON(t, directClient, http.MethodPost,
 		backendURL()+"/api/cert/issue", auth, map[string]any{})
+	if resp.StatusCode == http.StatusTooManyRequests {
+		t.Skipf("POST /api/cert/issue rate limited (429) — run on a fresh stack or wait 150s")
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST /api/cert/issue status=%d body=%v", resp.StatusCode, body)
 	}

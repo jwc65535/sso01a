@@ -71,25 +71,28 @@ _tally() {
 {{ range secrets "pki_int/certs/" -}}
 {{- $serial := . -}}
 {{- with secret (printf "pki_int/cert/%s" $serial) -}}
-{{- if and (not .Data.revocation_time) (not .Data.is_ca) -}}
-{{- $parsed := .Data.certificate | pemCertificates -}}
-{{- if $parsed -}}
-{{- $cn := (index $parsed 0).Subject.CommonName -}}
-{{- if $cn }}
+{{- if and (not .Data.revocation_time) (not .Data.is_ca) }}
 
-# ── {{ $serial }} / CN={{ $cn }} ──────────────────────────────────────────────
+# ── {{ $serial }} ─────────────────────────────────────────────────────────────
 _rc=0
 (
     SERIAL="{{ $serial }}"
-    CN="{{ $cn }}"
-    USER_DN="uid=${CN},ou=users,${BASE_DN}"
 
-    # Write PEM to a temp file — consul-template embeds literal newlines which
-    # are safe inside a heredoc but not in a variable assignment used by openssl.
+    # Write PEM first; extract CN at runtime via openssl (pemCertificates is not
+    # available in consul-template 0.39's template engine).
     PEM_FILE="${SCRATCH}/${SERIAL}.pem"
     cat > "${PEM_FILE}" <<'HEREDOC_END'
 {{ .Data.certificate }}
 HEREDOC_END
+
+    # Extract CN; skip certs with no parseable CN (e.g. intermediate CAs).
+    CN="$(openssl x509 -noout -subject -nameopt compat -in "${PEM_FILE}" 2>/dev/null \
+        | sed 's|.*CN=\([^/,]*\).*|\1|' | tr -d ' ')"
+    if [ -z "${CN}" ]; then
+        echo "[ldap-push] SKIP: cannot extract CN from serial=${SERIAL}."
+        exit 2
+    fi
+    USER_DN="uid=${CN},ou=users,${BASE_DN}"
 
     # Verify the LDAP entry exists.  cert-writer cannot add entries (ACL rule 2
     # restricts ou=service-accounts; rule 3 requires admin to create ou=users
@@ -143,8 +146,6 @@ HEREDOC_END
 ) || _rc=$?
 _tally ${_rc}
 
-{{ end -}}
-{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end }}

@@ -33,10 +33,7 @@
           {{- if not $first }},{{ end -}}
           {{- $first = false -}}
           {{- $cn := "" -}}
-          {{- $parsed := .Data.certificate | pemCertificates -}}
-          {{- if $parsed -}}
-            {{- $cn = (index $parsed 0).Subject.CommonName -}}
-          {{- end }}
+          {{- /* CN is parsed from the certificate PEM by the Golang app */ -}}
     {
       "serial":      "{{ $serial }}",
       "cn":          {{ $cn | toJSON }},

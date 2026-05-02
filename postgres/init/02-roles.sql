@@ -183,8 +183,8 @@ BEGIN
         -- Read-only access to own rows (RLS policies above enforce the filtering).
         EXECUTE format('GRANT SELECT ON enrolled_certs TO %I', p_username);
         EXECUTE format('GRANT SELECT ON sessions TO %I', p_username);
-
-        -- No grant on auth_events — audit log is not user-readable.
+        -- Per-user audit event visibility (WHERE username = current_user applied in query).
+        EXECUTE format('GRANT SELECT ON auth_events TO %I', p_username);
 
         RAISE NOTICE 'Provisioned role: %', p_username;
     ELSE

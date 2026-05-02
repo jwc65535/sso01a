@@ -52,6 +52,21 @@ SIGNED=$(vault write -format=json "${ROOT_MOUNT}/root/sign-intermediate" \
 
 vault write "${INT_MOUNT}/intermediate/set-signed" certificate="${SIGNED}"
 
+# Name the imported issuer "int-ca" so the role's issuer_ref can resolve it.
+# set-signed imports the cert as the default issuer but drops the name.
+INT_ISSUER_ID=$(vault list -format=json "${INT_MOUNT}/issuers" | jq -r '.[0]')
+vault write "${INT_MOUNT}/issuer/${INT_ISSUER_ID}" issuer_name=int-ca
+
+# Import the root CA into pki_int and set the manual chain so that
+# pki_int/cert/ca_chain returns the full chain (intermediate + root).
+# This allows the Go app to verify the PG server cert against the full chain.
+ROOT_CA=$(vault read -field=certificate "${ROOT_MOUNT}/cert/ca")
+ROOT_IN_INT=$(vault write -format=json "${INT_MOUNT}/issuers/import/cert" \
+    pem_bundle="${ROOT_CA}" | jq -r '.data.imported_issuers[0]')
+vault write "${INT_MOUNT}/issuer/${INT_ISSUER_ID}" \
+    issuer_name=int-ca \
+    manual_chain="${INT_ISSUER_ID},${ROOT_IN_INT}"
+
 vault write "${INT_MOUNT}/config/urls" \
     issuing_certificates="http://vault:8200/v1/${INT_MOUNT}/ca" \
     crl_distribution_points="http://vault:8200/v1/${INT_MOUNT}/crl"

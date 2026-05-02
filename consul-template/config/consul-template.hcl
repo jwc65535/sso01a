@@ -21,9 +21,9 @@
 
 # ── Vault connection ──────────────────────────────────────────────────────────
 vault {
-  # Vault address is set via VAULT_ADDR environment variable (docker-compose).
-  # Hardcoding here as a fallback; VAULT_ADDR env var takes precedence.
-  address = "http://vault:8200"
+  # All services use network_mode: host; "vault" hostname does not resolve via
+  # Docker DNS.  Use 127.0.0.1 directly (matches VAULT_ADDR env var).
+  address = "http://127.0.0.1:8200"
 
   # Read the renewable token written by vault-agent's auto_auth sink.
   # Avoids passing the root dev token to this container's environment.

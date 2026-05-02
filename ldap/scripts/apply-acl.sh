@@ -7,7 +7,7 @@
 # Usage: apply-acl.sh <ldapi-url> <ldap-base-dn>
 set -euo pipefail
 
-LDAPI_URL="${1:-ldapi:///opt%2Fbitnami%2Fopenldap%2Fvar%2Frun%2Fldapi}"
+LDAPI_URL="${1:-ldapi://%2Fvar%2Frun%2Fslapd%2Fldapi}"
 LDAP_ROOT="${2:-dc=sso,dc=local}"
 ACL_DIR="/etc/ldap/acl"
 

@@ -102,8 +102,9 @@ info "Phase 0: Preflight checks"
 # Wait up to 60 s for Vault to be ready and unsealed
 for i in $(seq 1 30); do
     STATUS=$(vault status -format=json 2>/dev/null || echo '{}')
-    INITIALIZED=$(echo "${STATUS}" | jq -r '.initialized // false')
-    SEALED=$(echo "${STATUS}" | jq -r '.sealed // true')
+    # Use `// null` + default to avoid jq's alternative operator treating false as empty.
+    INITIALIZED=$(echo "${STATUS}" | jq -r 'if .initialized == null then "false" else (.initialized | tostring) end')
+    SEALED=$(echo "${STATUS}" | jq -r 'if .sealed == null then "true" else (.sealed | tostring) end')
     if [ "${INITIALIZED}" = "true" ] && [ "${SEALED}" = "false" ]; then
         ok "Vault is initialized and unsealed."
         break
@@ -124,12 +125,21 @@ ok "Token is valid."
 # Any stolen token used to sign a rogue cert will appear in the audit log.
 # Enable this BEFORE doing anything else so we capture the bootstrap itself.
 info "Phase 1: Audit logging"
-mkdir -p /vault/audit
+# Ensure the audit directory is writable by the vault process (uid=vault).
+# In dev mode the exec context may be root, so chown the dir.
+mkdir -p /vault/audit 2>/dev/null || true
+chown vault:vault /vault/audit 2>/dev/null || true
+chmod 750 /vault/audit 2>/dev/null || true
+
 if ! vault audit list -format=json 2>/dev/null | jq -r 'keys[]' | grep -q '^file/'; then
-    vault audit enable file \
-        file_path=/vault/audit/audit.log \
-        log_raw=false       # never log plaintext secret values
-    ok "Audit log enabled at /vault/audit/audit.log"
+    if vault audit enable file \
+            file_path=/vault/audit/audit.log \
+            log_raw=false 2>/dev/null; then  # never log plaintext secret values
+        ok "Audit log enabled at /vault/audit/audit.log"
+    else
+        warn "Could not enable file audit backend (permission issue in dev mode)."
+        warn "Run 'make harden' after adjusting /vault/audit permissions for production."
+    fi
 else
     warn "File audit device already enabled."
 fi
@@ -146,10 +156,10 @@ info "  Tuning root PKI max lease TTL → ${ROOT_CA_TTL}"
 vault secrets tune -max-lease-ttl="${ROOT_CA_TTL}" "${ROOT_MOUNT}"
 
 # Generate root CA if it doesn't already have an issuer
-EXISTING_ISSUERS=$(vault list -format=json "${ROOT_MOUNT}/issuers" 2>/dev/null \
-    | jq -r '.[] // empty' | wc -l || echo "0")
-
-if [ "${EXISTING_ISSUERS}" -eq 0 ]; then
+if vault list -format=json "${ROOT_MOUNT}/issuers" 2>/dev/null \
+        | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
+    warn "  Root CA issuer already exists — skipping generation."
+else
     info "  Generating root CA (EC P-384, internal key — never exported)..."
     # key_type=ec key_bits=384 → NIST P-384, provides ~192-bit security
     # type=internal              → private key stays inside Vault's barrier forever
@@ -162,8 +172,6 @@ if [ "${EXISTING_ISSUERS}" -eq 0 ]; then
         exclude_cn_from_sans=true \
         | jq -r '.data.certificate' > /vault/audit/root-ca.pem
     ok "  Root CA generated. Public cert saved to /vault/audit/root-ca.pem"
-else
-    warn "  Root CA issuer already exists — skipping generation."
 fi
 
 info "  Configuring root CA CRL and issuing URLs..."
@@ -194,10 +202,10 @@ enable_secrets "${INT_MOUNT}" pki
 info "  Tuning intermediate PKI max lease TTL → ${MAX_CERT_TTL}"
 vault secrets tune -max-lease-ttl="${MAX_CERT_TTL}" "${INT_MOUNT}"
 
-EXISTING_INT_ISSUERS=$(vault list -format=json "${INT_MOUNT}/issuers" 2>/dev/null \
-    | jq -r '.[] // empty' | wc -l || echo "0")
-
-if [ "${EXISTING_INT_ISSUERS}" -eq 0 ]; then
+if vault list -format=json "${INT_MOUNT}/issuers" 2>/dev/null \
+        | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
+    warn "  Intermediate CA issuer already exists — skipping."
+else
     info "  Generating intermediate CA CSR (EC P-384)..."
     INT_CSR=$(vault write -format=json "${INT_MOUNT}/intermediate/generate/internal" \
         common_name="${DOMAIN} Intermediate CA" \
@@ -223,8 +231,6 @@ if [ "${EXISTING_INT_ISSUERS}" -eq 0 ]; then
         certificate="${SIGNED_CERT}"
 
     ok "  Intermediate CA signed and imported."
-else
-    warn "  Intermediate CA issuer already exists — skipping."
 fi
 
 info "  Configuring intermediate CA CRL and issuing URLs..."

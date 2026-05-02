@@ -1,6 +1,6 @@
 FROM php:8.2-apache
 
-ARG SIMPLESAMLPHP_VERSION=2.3.4
+ARG SIMPLESAMLPHP_VERSION=2.3.11
 
 # ── System packages ───────────────────────────────────────────────────────────
 # openssl:      generate the self-signed IdP SAML signing certificate
@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── SimpleSAMLphp ─────────────────────────────────────────────────────────────
 RUN curl -fsSL \
-      "https://github.com/simplesamlphp/simplesamlphp/releases/download/v${SIMPLESAMLPHP_VERSION}/simplesamlphp-${SIMPLESAMLPHP_VERSION}.tar.gz" \
+      "https://github.com/simplesamlphp/simplesamlphp/releases/download/v${SIMPLESAMLPHP_VERSION}/simplesamlphp-${SIMPLESAMLPHP_VERSION}-full.tar.gz" \
       -o /tmp/ssp.tar.gz \
     && mkdir -p /var/simplesamlphp \
     && tar xzf /tmp/ssp.tar.gz --strip-components=1 -C /var/simplesamlphp \
@@ -27,9 +27,11 @@ RUN curl -fsSL \
     && chown -R www-data:www-data /var/simplesamlphp
 
 # ── Apache vhost ──────────────────────────────────────────────────────────────
-# Disable the default vhost and install ours (SSP public/ at /simplesaml).
+# Run on port 8880 (not 80) so it does not conflict with the Shibboleth SP
+# when both containers share the host network (network_mode: host).
 COPY config/apache-idp.conf /etc/apache2/sites-available/simplesamlphp.conf
-RUN a2dissite 000-default 2>/dev/null || true \
+RUN sed -i 's/Listen 80/Listen 8880/' /etc/apache2/ports.conf \
+    && a2dissite 000-default 2>/dev/null || true \
     && a2ensite simplesamlphp
 
 # ── Runtime directories ───────────────────────────────────────────────────────
@@ -52,6 +54,6 @@ RUN mkdir -p \
 COPY scripts/init.sh /init.sh
 RUN chmod +x /init.sh
 
-EXPOSE 80
+EXPOSE 8880
 
 ENTRYPOINT ["/init.sh"]

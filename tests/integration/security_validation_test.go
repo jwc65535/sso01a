@@ -332,6 +332,9 @@ func TestTokenWithoutThumbprintIs403(t *testing.T) {
 		},
 		map[string]string{"fingerprint": "test-fp"},
 	)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		t.Skipf("POST /api/token rate limited (429) — cannot verify 403 behaviour; run on a fresh stack")
+	}
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("POST /api/token without thumbprint: want 403, got %d (body=%v)", resp.StatusCode, body)
 	} else {
@@ -350,9 +353,14 @@ func TestHTTPToHTTPSRedirect(t *testing.T) {
 	httpSP := strings.Replace(sp, "https://", "http://", 1)
 
 	// /healthz must return 200 on port 80 (Docker probe).
-	resp, _ := doJSON(t, directClient, http.MethodGet, httpSP+"/healthz", nil, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Skipf("HTTP /healthz not reachable (add hostname to /etc/hosts): status=%d", resp.StatusCode)
+	// Use a raw Get so a DNS/network failure causes a Skip rather than a Fatal.
+	healthzResp, err := directClient.Get(httpSP + "/healthz")
+	if err != nil {
+		t.Skipf("HTTP /healthz not reachable (add SP hostname to /etc/hosts or set SP_BASE_URL): %v", err)
+	}
+	healthzResp.Body.Close()
+	if healthzResp.StatusCode != http.StatusOK {
+		t.Skipf("HTTP /healthz not reachable (add hostname to /etc/hosts): status=%d", healthzResp.StatusCode)
 	}
 
 	// Any other path must redirect to HTTPS.

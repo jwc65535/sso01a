@@ -29,11 +29,7 @@
 dn: cn=sso,cn=schema,cn=config
 objectClass: olcSchemaConfig
 cn: sso
-
-# ── ssoDeviceFingerprint ──────────────────────────────────────────────────────
-# Stores the FingerprintJS visitor ID bound to the enrolled x509 certificate.
-# Single-valued: one enrolled device per user entry.
-# LDAP attribute type: Directory String, case-insensitive match.
+# ssoDeviceFingerprint — FingerprintJS visitorId bound to the enrolled cert.
 olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.1
   NAME 'ssoDeviceFingerprint'
   DESC 'FingerprintJS visitorId for the enrolled x509 certificate session'
@@ -41,22 +37,14 @@ olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.1
   SUBSTR caseIgnoreSubstringsMatch
   SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{256}
   SINGLE-VALUE )
-
-# ── ssoCertThumbprint ─────────────────────────────────────────────────────────
-# SHA-256 thumbprint of the enrolled x509 certificate encoded as base64url
-# (RFC 7638 JSON Web Key Thumbprint format, used in JWT cnf/x5t#S256 claim).
-# Single-valued: matches the most recently enrolled certificate.
-# Case-insensitive match covers both base64url variants.
+# ssoCertThumbprint — SHA-256 thumbprint (base64url, JWT cnf/x5t#S256).
 olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.2
   NAME 'ssoCertThumbprint'
   DESC 'SHA-256 thumbprint of the enrolled x509 cert (RFC 7638 base64url, for JWT cnf/x5t#S256)'
   EQUALITY caseIgnoreMatch
   SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{128}
   SINGLE-VALUE )
-
-# ── ssoEnrolledAt ─────────────────────────────────────────────────────────────
-# GeneralizedTime of the most recent cert enrolment.
-# Updated atomically with userCertificate to track rotation history.
+# ssoEnrolledAt — GeneralizedTime of the most recent cert enrolment.
 olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.3
   NAME 'ssoEnrolledAt'
   DESC 'Timestamp of the most recent certificate enrolment (GeneralizedTime)'
@@ -64,12 +52,7 @@ olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.3
   ORDERING generalizedTimeOrderingMatch
   SYNTAX 1.3.6.1.4.1.1466.115.121.1.24
   SINGLE-VALUE )
-
-# ── ssoUser (auxiliary objectClass) ──────────────────────────────────────────
-# Added alongside inetOrgPerson to allow our custom attributes.
-# Using AUXILIARY (not STRUCTURAL) so it can be combined with inetOrgPerson.
-# All attributes are MAY (optional): a user entry without a cert is valid
-# during the enrolment window before Vault issues the first certificate.
+# ssoUser — auxiliary class for cert lifecycle attributes (AUXILIARY, all MAY).
 olcObjectClasses: ( 1.3.6.1.4.1.99999.2.1
   NAME 'ssoUser'
   DESC 'Auxiliary class for zero-trust SSO certificate lifecycle attributes'
