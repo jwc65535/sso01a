@@ -124,13 +124,14 @@ sequenceDiagram
     Note over Browser: SPA detects page reload,<br/>retries auth sequence with FingerprintJS visitor ID ready
 
     Browser->>SP: POST /api/token {fingerprint: "fp-visitor-id"}
-    Note over SP: <Location /api/token> requireSession 1<br/>mod_shib injects: uid, mail, ssoCertThumbprint,<br/>ssoDeviceFingerprint, ssoEnrolledAt headers
+    Note over SP: [Location /api/token] requireSession 1<br/>mod_shib injects: uid, mail, ssoCertThumbprint,<br/>ssoDeviceFingerprint, ssoEnrolledAt headers
     SP->>App: POST /api/token (with Shibboleth headers + fingerprint body)
     App->>App: ShibbolethRequired: uid header present ✓
     App->>App: thumbprint present ✓ (or 403 if not enrolled)
     App->>App: Issue JWT: sub=alice, cnf.x5t#S256=thumbprint,<br/>device_fingerprint=fp-visitor-id, iss, aud, exp, jti
     App->>App: Sign JWT (ECDSA P-256, ES256, kid from memguard KeyStore)
-    App-->>SP: 200 {token, token_type, expires_in}<br/>Set-Cookie: sso_session=<jwt>; HttpOnly; Secure; SameSite=Strict
+    App-->>SP: 200 {token, token_type, expires_in}
+    Note over App,SP: Set-Cookie: sso_session=[jwt] (HttpOnly, Secure, SameSite=Strict)
     SP-->>Browser: 200 + Set-Cookie (sso_session forwarded from App)
 
     Note over Browser: JWT cookie set (HttpOnly — JS cannot read it)<br/>SPA retries GET /api/userinfo
@@ -204,8 +205,8 @@ sequenceDiagram
     participant App as Go Backend
     participant KeyStore as memguard<br/>KeyStore
 
-    Browser->>SP: GET /api/sessions (Cookie: sso_session=<jwt>)
-    Note over SP: <Location /api/sessions> — no Shibboleth required.<br/>ShibUseHeaders On: if SP session exists, attributes ARE<br/>injected (but sessions handler doesn't read them).
+    Browser->>SP: GET /api/sessions (Cookie: sso_session=[jwt])
+    Note over SP: [Location /api/sessions] — no Shibboleth required.<br/>ShibUseHeaders On: if SP session exists, attributes ARE<br/>injected (but sessions handler doesn't read them).
 
     SP->>App: GET /api/sessions (cookie forwarded, uid header may be present)
     App->>App: BearerAuth middleware:<br/>1. No Authorization header<br/>2. sso_session cookie found → raw = cookie.Value
@@ -253,13 +254,13 @@ sequenceDiagram
     KeyMgr->>KeyMgr: mu.RLock → enclaves["alice"]
     KeyMgr->>Enclave: Open() → *LockedBuffer (mlock'd pages)
     Enclave-->>KeyMgr: raw bytes (AES-GCM decrypted by memguard)
-    KeyMgr->>KeyMgr: try counter ± unlockSkew (Argon2id per window)<br/>decryptGCM: verify GCM tag, return plaintext
+    KeyMgr->>KeyMgr: try counter ± unlockSkew (Argon2id per window), decryptGCM — verify GCM tag, return plaintext
     KeyMgr->>KeyMgr: x509.ParsePKCS8PrivateKey → *ecdsa.PrivateKey
     KeyMgr-->>Factory: (*ecdsa.PrivateKey, cleanup func)
 
     Factory->>TLS: tls.Certificate{Certificate: certDER, PrivateKey: priv}
     Note over Factory,TLS: No temp files. Key lives in Go heap only.
-    Factory->>TLS: &tls.Config{Certificates:[cert], RootCAs:vaultCAPool,<br/>ServerName:"postgres", MinVersion:TLS13}
+    Factory->>TLS: tls.Config — cert, RootCAs:vaultCAPool, ServerName:postgres, MinVersion:TLS13
 
     Factory->>PG: pgx.ConnectConfig (TLS handshake)
     Note over Factory,PG: pg_hba.conf: hostssl sso all 0.0.0.0/0 cert<br/>PG verifies client cert chain → issuer = Vault intermediate CA<br/>PG maps cert CN "alice" → login role "alice"
