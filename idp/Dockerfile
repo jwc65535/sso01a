@@ -6,14 +6,16 @@ ARG SIMPLESAMLPHP_VERSION=2.3.11
 # openssl:      generate the self-signed IdP SAML signing certificate
 # libicu-dev:   PHP intl extension (required by SSP 2.x)
 # libzip-dev:   PHP zip extension (required by SSP 2.x)
+# libldap2-dev: PHP ldap extension (required by SSP ldap module)
 # unzip:        extract SSP tarball
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         openssl \
         libicu-dev \
         libzip-dev \
+        libldap2-dev \
         unzip \
-    && docker-php-ext-install intl zip \
+    && docker-php-ext-install intl zip ldap \
     && a2enmod rewrite headers \
     && rm -rf /var/lib/apt/lists/*
 

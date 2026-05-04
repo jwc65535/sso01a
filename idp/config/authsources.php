@@ -42,7 +42,7 @@ $config = [
     // ── LDAP authentication source ────────────────────────────────────────────
     // Key name 'sso-ldap' is referenced in saml20-idp-hosted.php as 'auth'.
     'sso-ldap' => [
-        'ldap:LDAP',
+        'ldap:Ldap',
 
         // ── Connection ────────────────────────────────────────────────────────
         // Plain LDAP on the Docker-internal ldap-net.  Switch to 'tls' and use
@@ -60,6 +60,10 @@ $config = [
         'dnpattern' => sprintf('uid=%%username%%,ou=users,%s', $ldapBaseDn),
 
         // ── Attribute retrieval ───────────────────────────────────────────────
+        // search.base is required by SSP ldap module v2.x even when dnpattern is
+        // used for bind; it tells SSP where to look when fetching attributes.
+        'search.base'       => [sprintf('ou=users,%s', $ldapBaseDn)],
+
         // null = fetch all attributes from the user's LDAP entry.
         // The authproc AttributeLimit filter in saml20-idp-hosted.php then
         // restricts which attributes are actually released in the assertion.

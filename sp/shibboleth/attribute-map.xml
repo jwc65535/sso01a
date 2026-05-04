@@ -28,10 +28,10 @@
     <!-- ── Custom sso01a attributes (private OID arc) ─────────────────────── -->
     <!-- x5t#S256 base64url thumbprint of the user's Vault-issued x509 cert.
          Backend uses this for JWT cnf (RFC 7800 proof-of-possession) binding. -->
-    <Attribute name="urn:oid:1.3.6.1.4.1.99999.1.1" id="ssoCertThumbprint"/>
+    <Attribute name="urn:oid:1.3.6.1.4.1.99999.1.2" id="ssoCertThumbprint"/>
 
     <!-- FingerprintJS visitor ID bound at enrolment; backend validates on each request. -->
-    <Attribute name="urn:oid:1.3.6.1.4.1.99999.1.2" id="ssoDeviceFingerprint"/>
+    <Attribute name="urn:oid:1.3.6.1.4.1.99999.1.1" id="ssoDeviceFingerprint"/>
 
     <!-- Unix epoch of certificate enrolment; backend enforces enrolment recency. -->
     <Attribute name="urn:oid:1.3.6.1.4.1.99999.1.3" id="ssoEnrolledAt"/>

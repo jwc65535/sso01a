@@ -49,6 +49,10 @@ $idpEntityId = getenv('IDP_ENTITY_ID')
 $metadata[$idpEntityId] = [
 
     // ── Identity ──────────────────────────────────────────────────────────────
+    // host => __DEFAULT__ lets SSP resolve this entry for any incoming hostname.
+    // Without this, SSP's host-based lookup fails even when there is only one entry.
+    'host' => '__DEFAULT__',
+
     // Auth source key (must match a key in authsources.php).
     'auth' => 'sso-ldap',
 
@@ -102,9 +106,9 @@ $metadata[$idpEntityId] = [
         // user across sessions. We use the LDAP uid (e.g., "alice") which also
         // equals the PostgreSQL role name and the x509 cert CN.
         20 => [
-            'class'     => 'saml:AttributeNameID',
-            'attribute' => 'uid',
-            'Format'    => 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+            'class'               => 'saml:AttributeNameID',
+            'identifyingAttribute' => 'uid',
+            'Format'              => 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
         ],
 
         // ── Step 30: rename LDAP attributes to SAML OID URN names ────────────
@@ -147,6 +151,8 @@ $metadata[$idpEntityId] = [
 
     // ── Single logout ─────────────────────────────────────────────────────────
     // Disabled for the initial deployment; enable in prod once the SP supports it.
-    'SingleLogoutService' => [],
+    // Do not set to an empty array — SSP validates endpoint Location strings and
+    // will throw if the key exists but contains no valid endpoint entries.
+    // 'SingleLogoutService' => [],
 
 ];

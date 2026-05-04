@@ -72,6 +72,10 @@ COPY bootstrap/           /etc/ldap/bootstrap/
 COPY scripts/             /etc/ldap/scripts/
 RUN  chmod +x /etc/ldap/scripts/*.sh
 
+# ── Tests ─────────────────────────────────────────────────────────────────────
+COPY tests/               /etc/ldap/tests/
+RUN  chmod +x /etc/ldap/tests/*.sh
+
 EXPOSE 1389
 
 ENTRYPOINT ["/etc/ldap/scripts/entrypoint.sh"]

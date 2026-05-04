@@ -6,18 +6,8 @@
   <title>SSO Portal</title>
   <link rel="stylesheet" href="style.css">
 
-  <!--
-    FingerprintJS open-source v4 — sets window.FingerprintJS
-    https://github.com/fingerprintjs/fingerprintjs
-
-    The SRI hash below pins the exact library version; update it when
-    upgrading FingerprintJS by running:
-      curl -s https://openfpcdn.io/fingerprintjs/v4/iife.min.js | openssl dgst -sha384 -binary | base64
-  -->
-  <script
-    src="https://openfpcdn.io/fingerprintjs/v4/iife.min.js"
-    crossorigin="anonymous"
-  ></script>
+  <!-- FingerprintJS open-source v4 — bundled locally to avoid CDN / ETP blocks -->
+  <script src="fpjs.js"></script>
 </head>
 <body>
 

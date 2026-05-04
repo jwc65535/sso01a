@@ -158,15 +158,27 @@ bash /etc/ldap/scripts/apply-acl.sh "${LDAPI_URL}" "${LDAP_ROOT}"
 ok "ACLs applied."
 
 # ── Step 5: Load bootstrap LDIF (DIT structure + service accounts + users) ────
+# Files named 03-group-members.ldif use changetype: modify and require
+# ldapmodify; all others are pure ADD operations handled by ldapadd.
 info "Step 5: Loading bootstrap LDIF files..."
 for _ldif in $(ls -1 "${BOOTSTRAP_DIR}"/*.ldif 2>/dev/null | sort); do
     _name=$(basename "${_ldif}")
-    if ldapadd -x -H "ldap://127.0.0.1:${LDAP_PORT}" \
-            -D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PASSWORD}" \
-            -f "${_ldif}" 2>/dev/null; then
-        ok "  Loaded: ${_name}"
+    if [[ "${_name}" == *"group-members"* ]]; then
+        if ldapmodify -x -H "ldap://127.0.0.1:${LDAP_PORT}" \
+                -D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PASSWORD}" \
+                -f "${_ldif}" 2>/dev/null; then
+            ok "  Modified: ${_name}"
+        else
+            info "  ${_name} returned non-zero (may already be up to date — continuing)."
+        fi
     else
-        info "  ${_name} returned non-zero (may already exist — continuing)."
+        if ldapadd -x -H "ldap://127.0.0.1:${LDAP_PORT}" \
+                -D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PASSWORD}" \
+                -f "${_ldif}" 2>/dev/null; then
+            ok "  Loaded: ${_name}"
+        else
+            info "  ${_name} returned non-zero (may already exist — continuing)."
+        fi
     fi
 done
 

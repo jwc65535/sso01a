@@ -99,28 +99,33 @@
   async function init() {
     showScreen('loading');
 
-    // Collect fingerprint in parallel with the auth check.
-    const [fpResult, userInfo] = await Promise.all([
-      window.Fingerprint.get().catch(() => ({ visitorId: 'unknown' })),
-      checkAuth(),
-    ]);
+    try {
+      // Collect fingerprint in parallel with the auth check.
+      const [fpResult, userInfo] = await Promise.all([
+        window.Fingerprint.get().catch(() => ({ visitorId: 'unknown' })),
+        checkAuth().catch(() => null),
+      ]);
 
-    if (userInfo) {
-      enterAuthed(userInfo, fpResult.visitorId);
-      return;
-    }
-
-    // No JWT cookie — try to exchange an active Shibboleth session for one.
-    const tokenOk = await acquireToken(fpResult.visitorId);
-    if (tokenOk) {
-      const userInfo2 = await checkAuth();
-      if (userInfo2) {
-        enterAuthed(userInfo2, fpResult.visitorId);
+      if (userInfo) {
+        enterAuthed(userInfo, fpResult.visitorId);
         return;
       }
-    }
 
-    enterUnauthed(fpResult.visitorId);
+      // No JWT cookie — try to exchange an active Shibboleth session for one.
+      const tokenOk = await acquireToken(fpResult.visitorId);
+      if (tokenOk) {
+        const userInfo2 = await checkAuth().catch(() => null);
+        if (userInfo2) {
+          enterAuthed(userInfo2, fpResult.visitorId);
+          return;
+        }
+      }
+
+      enterUnauthed(fpResult.visitorId);
+    } catch (err) {
+      console.error('init failed:', err);
+      enterUnauthed('unknown');
+    }
   }
 
   // ── States ───────────────────────────────────────────────────────────────────

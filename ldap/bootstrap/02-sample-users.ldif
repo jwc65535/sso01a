@@ -48,9 +48,5 @@ sn: Jones
 givenName: Bob
 mail: bob@sso.local
 
-# ── Add users to the sso-users group ──────────────────────────────────────────
-dn: cn=sso-users,ou=groups,dc=sso,dc=local
-changetype: modify
-add: member
-member: uid=alice,ou=users,dc=sso,dc=local
-member: uid=bob,ou=users,dc=sso,dc=local
+# ── Group membership is populated by 03-group-members.ldif via ldapmodify ─────
+# (ldapadd does not support changetype: modify; a separate file handles this)

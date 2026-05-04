@@ -75,7 +75,7 @@ $config = [
     // ── Logging ───────────────────────────────────────────────────────────────
     // DEV: stderr (visible in `docker compose logs idp`)
     // PROD: 'syslog' or 'file'
-    'logging.level'   => 5,   // SimpleSAML\Logger::INFO = 5
+    'logging.level'   => 7,   // SimpleSAML\Logger::DEBUG = 7 (temporary)
     'logging.handler' => 'stderr',
     'logging.facility' => defined('LOG_USER') ? LOG_USER : 'user',
     'logging.processname' => 'simplesamlphp',
@@ -91,9 +91,10 @@ $config = [
     'session.cookie.domain'           => '',
     'session.cookie.secure'           => false,    // PROD: true (requires HTTPS)
     'session.cookie.httponly'         => true,
-    // SameSite=None is required for SAML POST binding across origins.
-    // Requires secure=true in production (browsers block None without Secure).
-    'session.cookie.samesite'         => 'None',
+    // Lax is correct for SAML: all IdP interactions are top-level navigations.
+    // None requires Secure=true; IdP runs on plain HTTP in dev so use Lax.
+    // PROD: switch to None + session.cookie.secure=true when IdP is behind HTTPS.
+    'session.cookie.samesite'         => 'Lax',
     'session.phpsession.cookiename'   => 'SimpleSAML',
     'session.phpsession.savepath'     => null,     // use PHP default
     'session.phpsession.httponly'     => true,

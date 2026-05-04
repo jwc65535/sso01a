@@ -1,0 +1,16 @@
+# =============================================================================
+# ldap/bootstrap/03-group-members.ldif
+#
+# Adds sample dev users to the sso-users group.
+# This file uses changetype: modify, so it must be loaded with ldapmodify
+# (NOT ldapadd, which only handles ADD operations).
+#
+# The entrypoint.sh loads this file via ldapmodify after ldapadd finishes
+# with the earlier .ldif files.
+# =============================================================================
+
+dn: cn=sso-users,ou=groups,dc=sso,dc=local
+changetype: modify
+add: member
+member: uid=alice,ou=users,dc=sso,dc=local
+member: uid=bob,ou=users,dc=sso,dc=local

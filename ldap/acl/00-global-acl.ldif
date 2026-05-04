@@ -73,18 +73,23 @@ olcAccess: {1}to attrs=userCertificate,ssoCertThumbprint,ssoDeviceFingerprint,ss
   by * none
 olcAccess: {2}to dn.subtree="ou=service-accounts,__LDAP_ROOT__"
   by dn.exact="__ADMIN_DN__" manage
-  by self authenticate
+  by self auth
   by * none
-olcAccess: {3}to dn.subtree="ou=users,__LDAP_ROOT__"
+olcAccess: {3}to dn.subtree="ou=users,__LDAP_ROOT__" attrs=entry,objectClass
+  by anonymous read
+  by users read
+  by self read
+  by * none
+olcAccess: {4}to dn.subtree="ou=users,__LDAP_ROOT__"
   by self write
   by dn.exact="__ADMIN_DN__" manage
   by users read
   by * none
-olcAccess: {4}to dn.subtree="ou=groups,__LDAP_ROOT__"
+olcAccess: {5}to dn.subtree="ou=groups,__LDAP_ROOT__"
   by dn.exact="__ADMIN_DN__" manage
   by users read
   by * none
-olcAccess: {5}to *
+olcAccess: {6}to *
   by dn.exact="__ADMIN_DN__" manage
   by users read
   by * none

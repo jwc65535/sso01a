@@ -2,6 +2,10 @@
 # ldap/tests/verify-acl.sh
 # Smoke-tests that ACL rules are enforced as expected.
 # Run with: make test-ldap-acl (after `make up`)
+#
+# IMPLEMENTATION NOTE: heredocs inside $(...) don't work when the script is
+# fed to bash via stdin (bash -s), because stdin is already the script itself.
+# All ldapmodify calls write their LDIF to a temp file first, then use -f.
 set -euo pipefail
 
 LDAP_HOST="${LDAP_HOST:-localhost}"
@@ -20,18 +24,20 @@ FAILURES=0
 echo "=== LDAP ACL verification against ${H} ==="
 echo ""
 
-# ── Test 1: Anonymous can read userCertificate ───────────────────────────────
+# ── Test 1: Anonymous can read userCertificate ────────────────────────────────
 echo "Test 1: Anonymous read of userCertificate"
-RESULT=$(ldapsearch -x -H "${H}" -b "uid=alice,ou=users,${BASE_DN}" \
-    -s base "(objectClass=*)" userCertificate 2>/dev/null | grep -c "userCertificate" || true)
+RESULT=$(ldapsearch -LLL -x -H "${H}" -b "uid=alice,ou=users,${BASE_DN}" \
+    -s base "(objectClass=*)" userCertificate 2>/dev/null \
+    | grep -c "^userCertificate" || true)
 [ "${RESULT}" -ge 1 ] \
     && pass "Anonymous can read userCertificate" \
     || fail "Anonymous CANNOT read userCertificate (check ACL rule 1)"
 
 # ── Test 2: Anonymous CANNOT read userPassword ────────────────────────────────
 echo "Test 2: Anonymous cannot read userPassword"
-RESULT=$(ldapsearch -x -H "${H}" -b "uid=alice,ou=users,${BASE_DN}" \
-    -s base "(objectClass=*)" userPassword 2>/dev/null | grep -c "userPassword" || true)
+RESULT=$(ldapsearch -LLL -x -H "${H}" -b "uid=alice,ou=users,${BASE_DN}" \
+    -s base "(objectClass=*)" userPassword 2>/dev/null \
+    | grep -c "^userPassword" || true)
 [ "${RESULT}" -eq 0 ] \
     && pass "Anonymous cannot read userPassword" \
     || fail "Anonymous CAN read userPassword (ACL rule 0 broken!)"
@@ -47,24 +53,24 @@ RESULT=$(ldapsearch -x -H "${H}" -b "ou=service-accounts,${BASE_DN}" \
 # ── Test 4: cert-writer can update userCertificate ────────────────────────────
 if [ -n "${CERT_WRITER_PASSWORD}" ]; then
     echo "Test 4: cert-writer can write userCertificate"
-    # Generate a throwaway cert for the test
     TMPDIR=$(mktemp -d)
     openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -x509 \
         -days 1 -subj "/CN=test-acl" -keyout "${TMPDIR}/k.pem" \
         -out "${TMPDIR}/c.pem" 2>/dev/null
     openssl x509 -in "${TMPDIR}/c.pem" -outform DER -out "${TMPDIR}/c.der" 2>/dev/null
     CERT_B64=$(base64 -w0 "${TMPDIR}/c.der")
-    RESULT=$(ldapmodify -x -H "${H}" \
-        -D "${CERT_WRITER_DN}" -w "${CERT_WRITER_PASSWORD}" <<LDIF 2>&1
+    cat > "${TMPDIR}/t4.ldif" <<LDIF
 dn: uid=alice,ou=users,${BASE_DN}
 changetype: modify
 replace: userCertificate;binary
 userCertificate;binary:: ${CERT_B64}
 LDIF
-    )
+    RESULT=$(ldapmodify -x -H "${H}" \
+        -D "${CERT_WRITER_DN}" -w "${CERT_WRITER_PASSWORD}" \
+        -f "${TMPDIR}/t4.ldif" 2>&1 || true)
     echo "${RESULT}" | grep -q "modifying entry" \
         && pass "cert-writer can update userCertificate" \
-        || fail "cert-writer CANNOT update userCertificate (ACL rule 1 broken!)"
+        || fail "cert-writer CANNOT update userCertificate (ACL rule 1 broken!): ${RESULT}"
     rm -rf "${TMPDIR}"
 else
     echo "Test 4: SKIPPED (LDAP_CERT_WRITER_PASSWORD not set)"
@@ -73,31 +79,36 @@ fi
 # ── Test 5: cert-writer CANNOT modify cn (not a cert attribute) ───────────────
 if [ -n "${CERT_WRITER_PASSWORD}" ]; then
     echo "Test 5: cert-writer cannot modify cn"
-    RESULT=$(ldapmodify -x -H "${H}" \
-        -D "${CERT_WRITER_DN}" -w "${CERT_WRITER_PASSWORD}" <<LDIF 2>&1
+    T5=$(mktemp)
+    cat > "${T5}" <<LDIF
 dn: uid=alice,ou=users,${BASE_DN}
 changetype: modify
 replace: cn
 cn: Alice Hacked
 LDIF
-    )
+    RESULT=$(ldapmodify -x -H "${H}" \
+        -D "${CERT_WRITER_DN}" -w "${CERT_WRITER_PASSWORD}" \
+        -f "${T5}" 2>&1 || true)
+    rm -f "${T5}"
     echo "${RESULT}" | grep -qiE "insufficient|access|denied" \
         && pass "cert-writer cannot modify cn" \
-        || fail "cert-writer CAN modify cn (ACL rules too permissive!)"
+        || fail "cert-writer CAN modify cn (ACL rules too permissive!): ${RESULT}"
 fi
 
 # ── Test 6: Anonymous CANNOT modify anything ──────────────────────────────────
 echo "Test 6: Anonymous cannot write any attribute"
-RESULT=$(ldapmodify -x -H "${H}" <<LDIF 2>&1
+T6=$(mktemp)
+cat > "${T6}" <<LDIF
 dn: uid=alice,ou=users,${BASE_DN}
 changetype: modify
 replace: description
 description: hacked
 LDIF
-)
+RESULT=$(ldapmodify -x -H "${H}" -f "${T6}" 2>&1 || true)
+rm -f "${T6}"
 echo "${RESULT}" | grep -qiE "auth|anon|insufficient|access|denied" \
     && pass "Anonymous cannot write attributes" \
-    || fail "Anonymous CAN write attributes (ACL broken!)"
+    || fail "Anonymous CAN write attributes (ACL broken!): ${RESULT}"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""

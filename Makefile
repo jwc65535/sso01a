@@ -301,12 +301,13 @@ test-mtls: ## Smoke-test mTLS client-certificate authentication to PostgreSQL
 
 .PHONY: test-ldap-acl
 test-ldap-acl: ## Verify LDAP ACL rules (stack must be running)
-	@LDAP_HOST=localhost \
-	 LDAP_PORT=1389 \
-	 LDAP_BASE_DN=$$(grep ^LDAP_BASE_DN .env 2>/dev/null | cut -d= -f2- || echo dc=sso,dc=local) \
-	 LDAP_ADMIN_PASSWORD=$$(cat secrets/ldap_admin_password.txt 2>/dev/null) \
-	 LDAP_CERT_WRITER_PASSWORD=$$(cat secrets/ldap_cert_writer_password.txt 2>/dev/null) \
-	 bash ldap/tests/verify-acl.sh
+	$(COMPOSE) -p $(PROJECT) exec -T \
+	    -e LDAP_HOST=127.0.0.1 \
+	    -e LDAP_PORT=1389 \
+	    -e LDAP_BASE_DN=$$(grep ^LDAP_BASE_DN .env 2>/dev/null | cut -d= -f2- || echo dc=sso,dc=local) \
+	    -e LDAP_ADMIN_PASSWORD="$$(cat secrets/ldap_admin_password.txt 2>/dev/null)" \
+	    -e LDAP_CERT_WRITER_PASSWORD="$$(cat secrets/ldap_cert_writer_password.txt 2>/dev/null)" \
+	    ldap bash -s < ldap/tests/verify-acl.sh
 
 .PHONY: sp-cert-extract
 sp-cert-extract: ## Extract SP signing cert (base64 DER) for saml20-sp-remote.php certData
