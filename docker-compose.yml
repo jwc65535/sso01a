@@ -401,7 +401,7 @@ services:
       #   server.crt, server.key  — Vault-issued server cert (CN=postgres)
       #   ca-chain.pem            — Vault intermediate CA chain (verifies client certs)
       #   crl.pem                 — CRL (populated by make cert-push-now; optional)
-      - ./postgres/ssl:/var/lib/postgresql/ssl:ro
+      - ./postgres/ssl:/var/lib/postgresql/ssl
     healthcheck:
       test:
         - "CMD-SHELL"

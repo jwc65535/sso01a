@@ -203,6 +203,14 @@ body {
 
 details summary { cursor: pointer; margin-top: 0.5rem; color: var(--primary); }
 
+/* ── Certificate status line ────────────────────────────────────────────────── */
+
+.cert-status {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 /* ── Utilities ──────────────────────────────────────────────────────────── */
 
 .hidden { display: none; }

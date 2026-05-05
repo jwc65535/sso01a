@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	ssoAuth "github.com/sso01a/app/internal/auth"
 	ssoCrypto "github.com/sso01a/app/internal/crypto"
 	"github.com/sso01a/app/internal/db"
 	"github.com/sso01a/app/internal/vault"
@@ -75,13 +76,13 @@ type IssueResponse struct {
 
 // Issue handles POST /api/cert/issue.
 // The caller must be authenticated (JWT middleware already ran).
-// The UID is extracted from the Shibboleth uid header set by the SP.
 func (h *KeyHandler) Issue(w http.ResponseWriter, r *http.Request) {
-	uid := r.Header.Get("uid")
-	if uid == "" {
-		http.Error(w, "uid header required", http.StatusBadRequest)
+	claims, ok := ssoAuth.ClaimsFromContext(r.Context())
+	if !ok || claims.UID == "" {
+		jsonError(w, "authentication required", http.StatusUnauthorized)
 		return
 	}
+	uid := claims.UID
 
 	// Generate key + CSR locally.  privKeyDER must be sealed before this
 	// function returns; keymanager.Seal() zeroes it after sealing.
@@ -144,11 +145,12 @@ type SignResponse struct {
 // Unlocks the sealed private key for uid, signs SHA-256(payload), then
 // immediately destroys the LockedBuffer via deferred cleanup.
 func (h *KeyHandler) Sign(w http.ResponseWriter, r *http.Request) {
-	uid := r.Header.Get("uid")
-	if uid == "" {
-		http.Error(w, "uid header required", http.StatusBadRequest)
+	claims, ok := ssoAuth.ClaimsFromContext(r.Context())
+	if !ok || claims.UID == "" {
+		jsonError(w, "authentication required", http.StatusUnauthorized)
 		return
 	}
+	uid := claims.UID
 
 	var req SignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Payload == "" {

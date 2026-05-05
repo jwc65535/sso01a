@@ -26,5 +26,8 @@ window.APP_CONFIG = (function () {
 
     // Session storage key for the Bearer token (used only when cookieAuth = false).
     tokenKey: 'sso_access_token',
+
+    // Session storage key tracking the last issued cert serial (informational).
+    certSerialKey: 'sso_cert_serial',
   };
 })();

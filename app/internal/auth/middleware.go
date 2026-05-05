@@ -78,7 +78,6 @@ func extractBearer(r *http.Request) (string, bool) {
 
 func writeAuthError(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("WWW-Authenticate", `Bearer realm="sso01a"`)
 	w.WriteHeader(http.StatusUnauthorized)
 	_, _ = w.Write([]byte(`{"error":"unauthorized","detail":` +
 		`"` + strings.ReplaceAll(msg, `"`, `\"`) + `"}`))
